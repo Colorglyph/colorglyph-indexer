@@ -1,7 +1,13 @@
-use zephyr_sdk::{ soroban_sdk::{self, contracttype, xdr::{ContractEventV0, ScVal}, Address, BytesN, Map, Vec}, DatabaseInteract, EnvClient};
+use zephyr_sdk::{
+    soroban_sdk::{
+        self, contracttype,
+        xdr::{ContractEventV0, ScVal},
+        Address, BytesN, Map, Vec,
+    },
+    DatabaseInteract, EnvClient,
+};
 
 use crate::{ColorGlyph, CONTRACT_ADDRESS};
-
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -33,13 +39,19 @@ pub struct Glyph {
 
 pub(crate) fn get_glyph_colors_from_ledger(env: &EnvClient, hash: BytesN<32>) -> ScVal {
     let key = StorageKey::Glyph(hash);
-    let glyph: Glyph = env.read_contract_entry_by_key(CONTRACT_ADDRESS, key).unwrap().unwrap();
+    let glyph: Glyph = env
+        .read_contract_entry_by_key(CONTRACT_ADDRESS, key)
+        .unwrap()
+        .unwrap();
     env.to_scval(glyph.colors)
 }
 
 pub(crate) fn get_minter_colors_from_ledger(env: &EnvClient, minter: Address) -> ScVal {
     let key = StorageKey::Colors(minter);
-    let colors: Map<Address, Map<u32, Vec<u32>>> = env.read_contract_entry_by_key(CONTRACT_ADDRESS, key).unwrap().unwrap_or(Map::new(&env.soroban()));
+    let colors: Map<Address, Map<u32, Vec<u32>>> = env
+        .read_contract_entry_by_key(CONTRACT_ADDRESS, key)
+        .unwrap()
+        .unwrap_or(Map::new(&env.soroban()));
     env.to_scval(colors)
 }
 
@@ -68,10 +80,15 @@ pub(crate) fn get_glyph(env: &EnvClient, event: ContractEventV0, minted: bool) -
 }
 
 pub(crate) fn insert_or_update_glyph(env: &EnvClient, glyph: ColorGlyph, minter: ScVal) {
-    let glyphs: std::vec::Vec<ColorGlyph> = ColorGlyph::read_to_rows(env).into_iter().filter(|glyph| glyph.hash == minter).collect();
+    let glyphs: std::vec::Vec<ColorGlyph> = ColorGlyph::read_to_rows(env)
+        .into_iter()
+        .filter(|glyph| glyph.hash == minter)
+        .collect();
 
     if glyphs.len() > 0 {
-        env.update().column_equal_to_xdr("hash", &minter).execute(&glyph);
+        env.update()
+            .column_equal_to_xdr("hash", &minter)
+            .execute(&glyph);
     } else {
         glyph.put(env)
     }
