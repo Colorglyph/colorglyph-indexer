@@ -1,0 +1,32 @@
+name = "zephyr-colorglyph-ingestion"
+
+[[tables]]
+name = "glyphs"
+
+[[tables.columns]]
+name = "minter"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "owner"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "colors"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "hash"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "minted"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "scraped"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "owned"
+col_type = "BYTEA"
