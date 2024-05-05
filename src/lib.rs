@@ -7,7 +7,6 @@ use zephyr_sdk::{
     },
     DatabaseDerive, EnvClient,
 };
-
 mod glyphs;
 
 pub(crate) const CONTRACT_ADDRESS: [u8; 32] = [

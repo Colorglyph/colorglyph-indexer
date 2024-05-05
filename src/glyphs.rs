@@ -1,41 +1,12 @@
 use zephyr_sdk::{
     soroban_sdk::{
-        self, contracttype,
         xdr::{ContractEventV0, ScVal},
         Address, BytesN, Map, Vec,
     },
     DatabaseInteract, EnvClient,
 };
-
 use crate::{ColorGlyph, CONTRACT_ADDRESS};
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum StorageKey {
-    OwnerAddress,
-    TokenAddress,
-    FeeAddress,
-    MaxEntryLifetime,
-    MaxPaymentCount,
-    MineMultiplier,
-    MinterRoyaltyRate,
-    MinerRoyaltyRate,
-    Color(Address, Address, u32),
-    Colors(Address),
-    Glyph(BytesN<32>),
-    GlyphOwner(BytesN<32>),
-    GlyphMinter(BytesN<32>),
-    GlyphOffer(BytesN<32>),
-    AssetOffer(BytesN<32>, Address, i128),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct Glyph {
-    pub width: u32,
-    pub length: u32,
-    pub colors: Map<Address, Map<u32, Vec<u32>>>,
-}
+use colorglyph::types::{Glyph, StorageKey};
 
 pub(crate) fn get_glyph_colors_from_ledger(env: &EnvClient, hash: BytesN<32>) -> ScVal {
     let key = StorageKey::Glyph(hash);

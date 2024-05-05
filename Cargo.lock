@@ -133,6 +133,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "colorglyph"
+version = "0.0.1"
+source = "git+https://github.com/Colorglyph/colorglyph-soroban/#b579b098c43d730606eeb3e41178ccb779725934"
+dependencies = [
+ "soroban-fixed-point-math",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -983,6 +992,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-fixed-point-math"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7db9baa088cdf971a359b6a392ec3601290d8f3a6d6312e375e0310a4c1a3b7d"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "soroban-ledger-snapshot"
 version = "20.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1421,6 +1439,7 @@ checksum = "bec47e5bfd1bff0eeaf6d8b485cc1074891a197ab4225d504cb7a1ab88b02bf0"
 name = "zephyr-colorglyph-ingestion"
 version = "0.1.1"
 dependencies = [
+ "colorglyph",
  "zephyr-sdk",
 ]
 
