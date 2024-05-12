@@ -1440,14 +1440,16 @@ name = "zephyr-colorglyph-ingestion"
 version = "0.1.1"
 dependencies = [
  "colorglyph",
+ "hex",
+ "serde",
+ "serde_json",
+ "stellar-strkey",
  "zephyr-sdk",
 ]
 
 [[package]]
 name = "zephyr-macros"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0751c7b3249a29ad7349a1ddaadac53f3338e21b1e6b73d04b37fda8526eacb3"
 dependencies = [
  "quote",
  "syn",
@@ -1456,8 +1458,6 @@ dependencies = [
 [[package]]
 name = "zephyr-sdk"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18f8c8b3bc87f10aec79dc6f87b538d12290970afd90951af3c8a7f79e8a1c2b"
 dependencies = [
  "bincode",
  "rs-zephyr-common",
