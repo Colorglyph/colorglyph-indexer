@@ -4,7 +4,7 @@ use glyphs::{get_glyph, insert_or_update_glyph};
 use serde::{Deserialize, Serialize};
 use zephyr_sdk::{
     prelude::*, soroban_sdk::{
-        xdr::{AccountId, ContractEvent, ContractEventBody, Hash, InvokeContractArgs, LedgerEntryData, ScVal, Uint256}, Address, Map, String as SorobanString, Symbol
+        vec, xdr::{AccountId, ContractEvent, ContractEventBody, Hash, InvokeContractArgs, LedgerEntryData, ScVal, Uint256}, Address, IntoVal, Map, String as SorobanString, Symbol
     }, utils::parts_to_i128, DatabaseDerive, EnvClient,
 };
 mod glyphs;
@@ -116,9 +116,6 @@ pub struct ColorMintRequest {
 pub extern "C" fn simulate_color_mint() {
     let env = EnvClient::empty();
     let request: ColorMintRequest = env.read_request_body();
-    
-    let source = stellar_strkey::ed25519::PublicKey::from_string(&request.source).unwrap().0;
-    let source = AccountId(zephyr_sdk::soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(Uint256(source)));
 
     let function_name = Symbol::new(&env.soroban(), "colors_mine");
     let source_addr = Address::from_string(&SorobanString::from_str(&env.soroban(), &request.source));
@@ -127,16 +124,8 @@ pub extern "C" fn simulate_color_mint() {
         colors.set(color.color, color.amount);
     }
 
-    let ScVal::Symbol(function_name) = env.to_scval(function_name) else {panic!()};
-    let args = vec![env.to_scval(source_addr), env.to_scval(colors), ScVal::Void, ScVal::Void];
-
-    let resp = env.simulate(source, zephyr_sdk::soroban_sdk::xdr::HostFunction::InvokeContract(InvokeContractArgs {
-        contract_address: zephyr_sdk::soroban_sdk::xdr::ScAddress::Contract(Hash(CONTRACT_ADDRESS)),
-        function_name,
-        args: args.try_into().unwrap()
-    })).unwrap();
-
-    env.conclude(resp)
+    let resp = env.simulate_contract_call(request.source, CONTRACT_ADDRESS, function_name, vec![&env.soroban(), source_addr.into_val(env.soroban()), colors.into_val(env.soroban()), ().into_val(env.soroban()), ().into_val(env.soroban())]);
+    env.conclude(resp.unwrap())
 }
 
 // NB: the code below is experimental.
