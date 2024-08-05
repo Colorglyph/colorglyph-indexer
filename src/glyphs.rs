@@ -51,7 +51,7 @@ pub(crate) fn get_glyph(env: &EnvClient, event: ContractEventV0, minted: bool) -
 }
 
 pub(crate) fn insert_or_update_glyph(env: &EnvClient, glyph: ColorGlyph, minter: ScVal) {
-    let glyphs: std::vec::Vec<ColorGlyph> = ColorGlyph::read_to_rows(env)
+    let glyphs: std::vec::Vec<ColorGlyph> = ColorGlyph::read_to_rows(env, None)
         .into_iter()
         .filter(|glyph| glyph.hash == minter)
         .collect();

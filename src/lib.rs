@@ -60,7 +60,7 @@ pub extern "C" fn on_close() {
         } else if action == Symbol::new(&env.soroban(), "scrape_glyph") {
             env.log().debug("scrape_glyph", None);
             let hash = event.data.clone();
-            let glyphs: std::vec::Vec<ColorGlyph> = ColorGlyph::read_to_rows(&env)
+            let glyphs: std::vec::Vec<ColorGlyph> = ColorGlyph::read_to_rows(&env, None)
                 .into_iter()
                 .filter(|glyph| glyph.hash == hash)
                 .collect();
@@ -71,7 +71,7 @@ pub extern "C" fn on_close() {
                 .execute(&glyph);
         } else if action == Symbol::new(&env.soroban(), "transfer_glyph") {
             env.log().debug("transfer_glyph", None);
-            let to_filter = ColorGlyph::read_to_rows(&env);
+            let to_filter = ColorGlyph::read_to_rows(&env, None);
             let hash = event.data.clone();
 
             let mut preiously_owned = {
