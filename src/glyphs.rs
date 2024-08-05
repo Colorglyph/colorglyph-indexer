@@ -1,3 +1,5 @@
+use crate::{ColorGlyph, CONTRACT_ADDRESS};
+use colorglyph::types::{Glyph, StorageKey};
 use zephyr_sdk::{
     soroban_sdk::{
         xdr::{ContractEventV0, ScVal},
@@ -5,8 +7,6 @@ use zephyr_sdk::{
     },
     DatabaseInteract, EnvClient,
 };
-use crate::{ColorGlyph, CONTRACT_ADDRESS};
-use colorglyph::types::{Glyph, StorageKey};
 
 pub(crate) fn get_glyph_colors_from_ledger(env: &EnvClient, hash: BytesN<32>) -> ScVal {
     let key = StorageKey::Glyph(hash);

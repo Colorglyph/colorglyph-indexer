@@ -3,9 +3,17 @@ use std::collections::BTreeMap;
 use glyphs::{get_glyph, insert_or_update_glyph};
 use serde::{Deserialize, Serialize};
 use zephyr_sdk::{
-    prelude::*, soroban_sdk::{
-        vec, xdr::{AccountId, ContractEvent, ContractEventBody, Hash, InvokeContractArgs, LedgerEntryData, ScVal, Uint256}, Address, IntoVal, Map, String as SorobanString, Symbol
-    }, utils::parts_to_i128, DatabaseDerive, EnvClient,
+    prelude::*,
+    soroban_sdk::{
+        vec,
+        xdr::{
+            AccountId, ContractEvent, ContractEventBody, Hash, InvokeContractArgs, LedgerEntryData,
+            ScVal, Uint256,
+        },
+        Address, IntoVal, Map, String as SorobanString, Symbol,
+    },
+    utils::parts_to_i128,
+    DatabaseDerive, EnvClient,
 };
 mod glyphs;
 
@@ -99,11 +107,10 @@ pub extern "C" fn on_close() {
     }
 }
 
-
 #[derive(Serialize, Deserialize)]
 pub struct ColorClient {
     color: u32,
-    amount: u32
+    amount: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -118,13 +125,25 @@ pub extern "C" fn simulate_color_mint() {
     let request: ColorMintRequest = env.read_request_body();
 
     let function_name = Symbol::new(&env.soroban(), "colors_mine");
-    let source_addr = Address::from_string(&SorobanString::from_str(&env.soroban(), &request.source));
+    let source_addr =
+        Address::from_string(&SorobanString::from_str(&env.soroban(), &request.source));
     let mut colors = Map::new(&env.soroban());
     for color in request.colors {
         colors.set(color.color, color.amount);
     }
 
-    let resp = env.simulate_contract_call(request.source, CONTRACT_ADDRESS, function_name, vec![&env.soroban(), source_addr.into_val(env.soroban()), colors.into_val(env.soroban()), ().into_val(env.soroban()), ().into_val(env.soroban())]);
+    let resp = env.simulate_contract_call(
+        request.source,
+        CONTRACT_ADDRESS,
+        function_name,
+        vec![
+            &env.soroban(),
+            source_addr.into_val(env.soroban()),
+            colors.into_val(env.soroban()),
+            ().into_val(env.soroban()),
+            ().into_val(env.soroban()),
+        ],
+    );
     env.conclude(resp.unwrap())
 }
 
@@ -132,22 +151,22 @@ pub extern "C" fn simulate_color_mint() {
 
 #[derive(Serialize, Deserialize)]
 pub struct OffersByHashRequest {
-    hash: String
+    hash: String,
 }
 
 // NB: the below code describes a serverless function that executes quite an
 // intensive call, thus doesn't rely on calling the host environment to improve
-// execution speed. 
+// execution speed.
 //
 // This kind of behaviour is generally discouraged as requests could take up
 // to 1s or more if the contract has many entries.
 //
 // We use this approach here only for demonstration purposes and will likely
 // soon move this logic to the ingestion process and only keep the function for running
-// a very quick catchup. 
+// a very quick catchup.
 
-// NB: the SDK doesn't have yet the helpers to deal with such functions more easily, 
-// hence the code you're seeing here is very verbose. The hope is that it will make you 
+// NB: the SDK doesn't have yet the helpers to deal with such functions more easily,
+// hence the code you're seeing here is very verbose. The hope is that it will make you
 // appreciate all the code above and Zephyr's built-in compatibility with Soroban
 // types.
 
@@ -155,14 +174,14 @@ pub struct OffersByHashRequest {
 pub struct UnifiedResponse {
     owned_colors: Vec<Color>,
     mined_colors: Vec<Color>,
-    glyph_offers: BTreeMap<String, Vec<OfferType>>
+    glyph_offers: BTreeMap<String, Vec<OfferType>>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum OfferType {
     Glyph(String),
     Asset(String, i128),
-    AssetSell(String, String, i128)
+    AssetSell(String, String, i128),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -170,12 +189,12 @@ pub struct Color {
     miner: String,
     owner: String,
     color: u32,
-    amount: u32
+    amount: u32,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct UnifiedRequest {
-    user: String
+    user: String,
 }
 
 #[no_mangle]
@@ -189,53 +208,82 @@ pub extern "C" fn unified_cg_query() {
     let mut glyph_offers = BTreeMap::new();
 
     for entry in from_ledger {
-        if let ScVal::Vec(Some(vec))  = entry.key {
+        if let ScVal::Vec(Some(vec)) = entry.key {
             if let Some(ScVal::Symbol(symbol)) = vec.get(0) {
                 if symbol.to_string() == "Color" {
-                    let ScVal::Address(miner) = vec.get(1).unwrap() else {panic!()};
-                    let ScVal::Address(owner) = vec.get(2).unwrap() else {panic!()};
-                    let ScVal::U32(color) = vec.get(3).unwrap() else {panic!()};
-                    
-                    let LedgerEntryData::ContractData(data) = entry.entry.data else {panic!()};
-                    let ScVal::U32(val) = data.val else {panic!()};
+                    let ScVal::Address(miner) = vec.get(1).unwrap() else {
+                        panic!()
+                    };
+                    let ScVal::Address(owner) = vec.get(2).unwrap() else {
+                        panic!()
+                    };
+                    let ScVal::U32(color) = vec.get(3).unwrap() else {
+                        panic!()
+                    };
+
+                    let LedgerEntryData::ContractData(data) = entry.entry.data else {
+                        panic!()
+                    };
+                    let ScVal::U32(val) = data.val else { panic!() };
 
                     let color = Color {
                         miner: miner.to_string(),
                         owner: owner.to_string(),
                         color: *color,
-                        amount: val
+                        amount: val,
                     };
-                    
+
                     if owner.to_string() == request.user {
                         owned_colors.push(color.clone())
-                    } 
-                    
+                    }
+
                     if miner.to_string() == request.user {
                         mined_colors.push(color)
                     }
                 } else if symbol.to_string() == "GlyphOffer" {
                     let hash = bytes_to_str(vec.get(1).unwrap());
 
-                    let LedgerEntryData::ContractData(data) = entry.entry.data else {panic!()};
-                    let ScVal::Vec(Some(offers)) = data.val else {panic!()};
+                    let LedgerEntryData::ContractData(data) = entry.entry.data else {
+                        panic!()
+                    };
+                    let ScVal::Vec(Some(offers)) = data.val else {
+                        panic!()
+                    };
 
                     let mut mapped_offers = Vec::new();
 
                     for offer in offers.to_vec() {
-                        let ScVal::Vec(Some(offer)) = offer else {panic!()};
+                        let ScVal::Vec(Some(offer)) = offer else {
+                            panic!()
+                        };
                         if let Some(ScVal::Symbol(symbol)) = offer.get(0) {
                             if symbol.to_string() == "Glyph" {
                                 let hash = bytes_to_str(offer.get(1).unwrap());
                                 mapped_offers.push(OfferType::Glyph(hash.into()));
                             } else if symbol.to_string() == "Asset" {
-                                let ScVal::Address(addr) = vec.get(1).unwrap() else {panic!()};
-                                let ScVal::I128(parts) = vec.get(2).unwrap() else {panic!()};
-                                mapped_offers.push(OfferType::Asset(addr.to_string(), parts_to_i128(parts)));
+                                let ScVal::Address(addr) = vec.get(1).unwrap() else {
+                                    panic!()
+                                };
+                                let ScVal::I128(parts) = vec.get(2).unwrap() else {
+                                    panic!()
+                                };
+                                mapped_offers
+                                    .push(OfferType::Asset(addr.to_string(), parts_to_i128(parts)));
                             } else if symbol.to_string() == "AssetSell" {
-                                let ScVal::Address(addr) = vec.get(1).unwrap() else {panic!()};
-                                let ScVal::Address(addr1) = vec.get(2).unwrap() else {panic!()};
-                                let ScVal::I128(parts) = vec.get(3).unwrap() else {panic!()};
-                                mapped_offers.push(OfferType::AssetSell(addr.to_string(), addr1.to_string(), parts_to_i128(parts)));
+                                let ScVal::Address(addr) = vec.get(1).unwrap() else {
+                                    panic!()
+                                };
+                                let ScVal::Address(addr1) = vec.get(2).unwrap() else {
+                                    panic!()
+                                };
+                                let ScVal::I128(parts) = vec.get(3).unwrap() else {
+                                    panic!()
+                                };
+                                mapped_offers.push(OfferType::AssetSell(
+                                    addr.to_string(),
+                                    addr1.to_string(),
+                                    parts_to_i128(parts),
+                                ));
                             }
                         }
                     }
@@ -249,13 +297,12 @@ pub extern "C" fn unified_cg_query() {
     env.conclude(UnifiedResponse {
         mined_colors,
         owned_colors,
-        glyph_offers
+        glyph_offers,
     });
 }
 
-
 fn bytes_to_str(bytes: &ScVal) -> String {
-    let ScVal::Bytes(hash) = bytes else {panic!()};
+    let ScVal::Bytes(hash) = bytes else { panic!() };
     let hash = hex::encode(hash.0.to_vec());
 
     hash
