@@ -17,14 +17,14 @@ pub(crate) fn get_glyph_colors_from_ledger(env: &EnvClient, hash: BytesN<32>) ->
     env.to_scval(glyph.colors)
 }
 
-pub(crate) fn get_minter_colors_from_ledger(env: &EnvClient, minter: Address) -> ScVal {
-    let key = StorageKey::Colors(minter);
-    let colors: Map<Address, Map<u32, Vec<u32>>> = env
-        .read_contract_entry_by_key(CONTRACT_ADDRESS, key)
-        .unwrap()
-        .unwrap_or(Map::new(&env.soroban()));
-    env.to_scval(colors)
-}
+// pub(crate) fn get_minter_colors_from_ledger(env: &EnvClient, minter: Address) -> ScVal {
+//     let key = StorageKey::Colors(minter);
+//     let colors: Map<Address, Map<u32, Vec<u32>>> = env
+//         .read_contract_entry_by_key(CONTRACT_ADDRESS, key)
+//         .unwrap()
+//         .unwrap_or(Map::new(&env.soroban()));
+//     env.to_scval(colors)
+// }
 
 pub(crate) fn get_glyph(env: &EnvClient, event: ContractEventV0, minted: bool) -> ColorGlyph {
     ColorGlyph {
@@ -34,11 +34,13 @@ pub(crate) fn get_glyph(env: &EnvClient, event: ContractEventV0, minted: bool) -
         } else {
             event.topics[2].clone()
         },
-        colors: if minted {
-            get_glyph_colors_from_ledger(env, env.from_scval(&event.data))
-        } else {
-            get_minter_colors_from_ledger(env, env.from_scval(&event.topics[1].clone()))
-        },
+        colors: get_glyph_colors_from_ledger(env, env.from_scval(&event.data)),
+        // colors: if minted {
+        //     get_glyph_colors_from_ledger(env, env.from_scval(&event.data))
+        // } 
+        // else {
+        //     get_minter_colors_from_ledger(env, env.from_scval(&event.topics[1].clone()))
+        // },
         hash: if minted {
             event.data.clone()
         } else {
