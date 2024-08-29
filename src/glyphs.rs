@@ -8,25 +8,17 @@ use zephyr_sdk::{
     DatabaseInteract, EnvClient,
 };
 
-pub(crate) fn get_glyph_colors_from_ledger(env: &EnvClient, hash: BytesN<32>) -> ScVal {
+pub(crate) fn get_glyph_from_ledger(env: &EnvClient, hash: BytesN<32>) -> Glyph {
     let key = StorageKey::Glyph(hash);
-    let glyph: Glyph = env
-        .read_contract_entry_by_key(CONTRACT_ADDRESS, key)
+
+    env.read_contract_entry_by_key(CONTRACT_ADDRESS, key)
         .unwrap()
-        .unwrap();
-    env.to_scval(glyph.colors)
+        .unwrap()
 }
 
-// pub(crate) fn get_minter_colors_from_ledger(env: &EnvClient, minter: Address) -> ScVal {
-//     let key = StorageKey::Colors(minter);
-//     let colors: Map<Address, Map<u32, Vec<u32>>> = env
-//         .read_contract_entry_by_key(CONTRACT_ADDRESS, key)
-//         .unwrap()
-//         .unwrap_or(Map::new(&env.soroban()));
-//     env.to_scval(colors)
-// }
-
 pub(crate) fn get_glyph(env: &EnvClient, event: ContractEventV0, minted: bool) -> ColorGlyph {
+    let glyph = get_glyph_from_ledger(env, env.from_scval(&event.data));
+
     ColorGlyph {
         minter: event.topics[1].clone(),
         owner: if let ScVal::Void = event.topics[2] {
@@ -34,21 +26,14 @@ pub(crate) fn get_glyph(env: &EnvClient, event: ContractEventV0, minted: bool) -
         } else {
             event.topics[2].clone()
         },
-        colors: get_glyph_colors_from_ledger(env, env.from_scval(&event.data)),
-        // colors: if minted {
-        //     get_glyph_colors_from_ledger(env, env.from_scval(&event.data))
-        // } 
-        // else {
-        //     get_minter_colors_from_ledger(env, env.from_scval(&event.topics[1].clone()))
-        // },
+        colors: env.to_scval(glyph.colors),
         hash: if minted {
             event.data.clone()
         } else {
             event.topics[1].clone()
         },
-        minted: env.to_scval(minted),
-        scraped: env.to_scval(false),
-        owned: env.to_scval(true),
+        width: env.to_scval(glyph.width),
+        length: env.to_scval(glyph.length),
     }
 }
 
