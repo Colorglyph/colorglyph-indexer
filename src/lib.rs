@@ -1,19 +1,21 @@
-use core::str::FromStr;
-use std::collections::BTreeMap;
-
-// use glyphs::{get_glyph, insert_or_update_glyph};
+use colorglyph::types::{Glyph, StorageKey};
 use serde::{Deserialize, Serialize};
+use stellar_xdr::curr::ScMap;
 use zephyr_sdk::{
     prelude::*,
-    soroban_sdk::{
-        vec, xdr::{
-            AccountId, ContractEvent, ContractEventBody, FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntry, LedgerEntryChange, LedgerEntryData, LedgerKey, Operation, OperationBody, ScAddress, ScSymbol, ScVal, StringM, TransactionEnvelope, TransactionMeta, TransactionResultMeta, TransactionV0Envelope, TransactionV1Envelope, Uint256
-        }, Address, FromVal, IntoVal, Map, String as SorobanString, Symbol
-    },
-    utils::parts_to_i128,
-    DatabaseDerive, EntryChanges, EnvClient
+    soroban_sdk::{xdr::{
+        FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash,
+        HostFunction, InnerTransactionResult, InnerTransactionResultPair,
+        InnerTransactionResultResult, InvokeContractArgs, InvokeHostFunctionOp,
+        InvokeHostFunctionResult, LedgerEntry, LedgerEntryChange, LedgerEntryChanges,
+        LedgerEntryData, LedgerKey, Operation, OperationBody, OperationMeta, OperationResult,
+        OperationResultTr, ScAddress, ScVal, ToXdr, TransactionEnvelope, TransactionMeta,
+        TransactionMetaV3, TransactionResult, TransactionResultMeta, TransactionResultPair,
+        TransactionResultResult, TransactionV1Envelope, VecM,
+    }, FromVal},
+    utils::address_to_alloc_string,
+    DatabaseDerive, EnvClient,
 };
-// mod glyphs;
 
 pub(crate) const CONTRACT_ADDRESS: [u8; 32] = [
     // 40, 76, 4, 220, 239, 185, 174, 223, 218, 252, 223, 244, 153, 121, 154, 92, 108, 72, 251, 184,
@@ -26,7 +28,7 @@ pub(crate) const CONTRACT_ADDRESS: [u8; 32] = [
 // TODO we don't need to save minted, scraped and owned all separately. We just need to know if the glyph is scraped or not which is actually determined by if the width is > 0
 #[derive(DatabaseDerive, Clone, Serialize, Debug)]
 #[with_name("colors")]
-pub struct Colors {
+pub struct ZephyrColor {
     miner: String,
     owner: String,
     color: u32,
@@ -35,8 +37,8 @@ pub struct Colors {
 
 #[derive(DatabaseDerive, Clone, Serialize, Debug)]
 #[with_name("glyphs")]
-pub struct Glyphs {
-    hash: String,
+pub struct ZephyrGlyph {
+    hash: Vec<u8>,
     owner: String,
     minter: String,
     width: u32,
@@ -46,7 +48,7 @@ pub struct Glyphs {
 
 #[derive(DatabaseDerive, Clone, Serialize, Debug)]
 #[with_name("offers")]
-pub struct Offers {
+pub struct ZephyrOffer {
     seller: String,
     selling: String,
     buying: String,
@@ -69,38 +71,7 @@ pub extern "C" fn on_close() {
     // env.reader().tx_processing().into_iter()
 
     for (tx_envelope, transaction_result_meta) in env.reader().envelopes_with_meta().into_iter() {
-        match tx_envelope {
-            TransactionEnvelope::TxV0(TransactionV0Envelope { tx, .. }) => {
-                for Operation { body, .. } in tx.operations.iter() {
-                    match body {
-                        OperationBody::InvokeHostFunction(op) => process_invoke_host_function_op(&env, transaction_result_meta, op.clone()),
-                        _ => {}
-                    }
-                }
-            }
-            TransactionEnvelope::Tx(TransactionV1Envelope { tx, .. }) => {
-                for Operation { body, .. } in tx.operations.iter() {
-                    match body {
-                        OperationBody::InvokeHostFunction(op) => process_invoke_host_function_op(&env, transaction_result_meta, op.clone()),
-                        _ => {}
-                    }
-                }
-            }
-            TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope { tx, .. }) => {
-                let FeeBumpTransaction { inner_tx, .. } = tx;
-
-                match inner_tx {
-                    FeeBumpTransactionInnerTx::Tx(TransactionV1Envelope { tx, .. }) => {
-                        for Operation { body, .. } in tx.operations.iter() {
-                            match body {
-                                OperationBody::InvokeHostFunction(op) => process_invoke_host_function_op(&env, transaction_result_meta, op.clone()),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        process_on_close(&env, tx_envelope, transaction_result_meta);
 
         // let TransactionResultMeta {
         //     tx_apply_processing,
@@ -186,14 +157,123 @@ pub extern "C" fn on_close() {
     // }
 }
 
-fn process_invoke_host_function_op(env: &EnvClient, transaction_result_meta: &TransactionResultMeta, op: InvokeHostFunctionOp) {
+fn process_on_close(
+    env: &EnvClient,
+    tx_envelope: &TransactionEnvelope,
+    transaction_result_meta: &TransactionResultMeta,
+) {
+    let TransactionResultMeta {
+        result,
+        tx_apply_processing,
+        ..
+    } = transaction_result_meta;
+    let TransactionResultPair { result, .. } = result;
+    let TransactionResult { result, .. } = result;
+
+    match result {
+        TransactionResultResult::TxFeeBumpInnerSuccess(tx) => {
+            let InnerTransactionResultPair { result, .. } = tx;
+            let InnerTransactionResult { result, .. } = result;
+
+            match result {
+                InnerTransactionResultResult::TxSuccess(results) => {
+                    process_operation_result(&env, results, tx_envelope, tx_apply_processing)
+                }
+                _ => {}
+            }
+        }
+        TransactionResultResult::TxSuccess(results) => {
+            process_operation_result(&env, results, tx_envelope, tx_apply_processing)
+        }
+        _ => {}
+    }
+}
+
+fn process_operation_result(
+    env: &EnvClient,
+    results: &VecM<OperationResult>,
+    tx_envelope: &TransactionEnvelope,
+    tx_apply_processing: &TransactionMeta,
+) {
+    for result in results.iter() {
+        match result {
+            OperationResult::OpInner(tr) => match tr {
+                OperationResultTr::InvokeHostFunction(result) => match result {
+                    InvokeHostFunctionResult::Success(_) => match tx_apply_processing {
+                        TransactionMeta::V3(meta) => {
+                            let TransactionMetaV3 { operations, .. } = meta;
+
+                            for operation in operations.iter() {
+                                let OperationMeta { changes, .. } = operation;
+
+                                match tx_envelope {
+                                    TransactionEnvelope::Tx(TransactionV1Envelope {
+                                        tx, ..
+                                    }) => {
+                                        for Operation { body, .. } in tx.operations.iter() {
+                                            match body {
+                                                OperationBody::InvokeHostFunction(op) => {
+                                                    process_invoke_host_function_op(
+                                                        &env, op, changes,
+                                                    )
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    TransactionEnvelope::TxFeeBump(
+                                        FeeBumpTransactionEnvelope { tx, .. },
+                                    ) => {
+                                        let FeeBumpTransaction { inner_tx, .. } = tx;
+
+                                        match inner_tx {
+                                            FeeBumpTransactionInnerTx::Tx(
+                                                TransactionV1Envelope { tx, .. },
+                                            ) => {
+                                                for Operation { body, .. } in tx.operations.iter() {
+                                                    match body {
+                                                        OperationBody::InvokeHostFunction(op) => {
+                                                            process_invoke_host_function_op(
+                                                                &env, op, changes,
+                                                            )
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                },
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+fn process_invoke_host_function_op(
+    env: &EnvClient,
+    op: &InvokeHostFunctionOp,
+    changes: &LedgerEntryChanges,
+) {
     let InvokeHostFunctionOp { host_function, .. } = op;
 
     match host_function {
         HostFunction::InvokeContract(op) => {
-            let InvokeContractArgs { contract_address, function_name, args } = op;
+            let InvokeContractArgs {
+                contract_address,
+                function_name,
+                args,
+            } = op;
 
-            if contract_address == ScAddress::Contract(Hash(CONTRACT_ADDRESS)) {
+            if *contract_address == ScAddress::Contract(Hash(CONTRACT_ADDRESS)) {
                 // colors_mine
                 // colors_transfer
 
@@ -208,33 +288,20 @@ fn process_invoke_host_function_op(env: &EnvClient, transaction_result_meta: &Tr
 
                 // }
 
-                let TransactionResultMeta { fee_processing, .. } = transaction_result_meta;
-
-                for change in fee_processing.iter() {
+                for change in changes.iter() {
                     match change {
-                        LedgerEntryChange::Created(LedgerEntry { data, .. }) => process_ledger_entry_data(&env, data, 1),
-                        LedgerEntryChange::Updated(LedgerEntry { data, .. }) => process_ledger_entry_data(&env, data, 2),
-                        LedgerEntryChange::Removed(key) => {
-                            match key {
-                                LedgerKey::ContractData(data)  => {
-                                    env.log().debug(
-                                        format!(
-                                            "0"
-                                            // "0 {} {:?}",
-                                            // data.contract,
-                                            // data.key,
-                                        ),
-                                        None,
-                                    );
-                                }
-                                _ => {}
-                            }   
+                        LedgerEntryChange::Removed(key) => process_ledger_key(&env, key, 0),
+                        LedgerEntryChange::Created(LedgerEntry { data, .. }) => {
+                            process_ledger_entry_data(&env, data, 1)
                         }
-                        LedgerEntryChange::State(LedgerEntry { data, .. }) => process_ledger_entry_data(&env, data, 3),
+                        LedgerEntryChange::Updated(LedgerEntry { data, .. }) => {
+                            process_ledger_entry_data(&env, data, 2)
+                        }
+                        _ => {}
                     }
                 }
             }
-        },
+        }
         _ => {}
     }
 }
@@ -242,20 +309,130 @@ fn process_invoke_host_function_op(env: &EnvClient, transaction_result_meta: &Tr
 fn process_ledger_entry_data(env: &EnvClient, data: &LedgerEntryData, kind: u8) {
     match data {
         LedgerEntryData::ContractData(entry) => {
-            env.log().debug(
-                format!(
-                    "{}",
-                    // "{} {} {:?} {:?}",
-                    kind,
-                    // entry.contract,
-                    // entry.key,
-                    // entry.val,
-                ),
-                None,
-            );
+            let key = env.try_from_scval::<StorageKey>(&entry.key);
+
+            match key {
+                Ok(key) => {
+                    match key {
+                        StorageKey::Color(miner, owner, color) => {
+                            let color = ZephyrColor {
+                                miner: address_to_alloc_string(env, miner),
+                                owner: address_to_alloc_string(env, owner),
+                                color,
+                                amount: env.from_scval(&entry.val),
+                            };
+
+                            env.put(&color);
+                        }
+                        StorageKey::Glyph(hash) => {
+                            let glyph: Glyph = env.from_scval(&entry.val);
+
+                            // env.log().debug(
+                            //     format!("{} {} {:?} {:?}", kind, entry.contract, hash, glyph,),
+                            //     None,
+                            // );
+
+                            let test = glyph.colors.to_xdr(&env.soroban()).to_alloc_vec();
+                            let test = ScMap::from_xdr(test, Limits::none()).unwrap();
+
+                            let glyph = ZephyrGlyph {
+                                hash: hash.to_array().to_vec(),
+                                owner: String::default(),
+                                minter: String::default(),
+                                width: glyph.width,
+                                length: glyph.length,
+                                colors: ScVal::Map(Some(test))
+                            };
+
+                            env.put(&glyph);
+                        }
+                        // GlyphOwner(BytesN<32>),
+                        // GlyphMinter(BytesN<32>),
+                        // GlyphOffer(BytesN<32>),
+                        // AssetOffer(BytesN<32>, Address, i128), // glyph, sac, amount
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
         }
         _ => {}
     }
+}
+
+fn process_ledger_key(env: &EnvClient, key: &LedgerKey, kind: u8) {
+    match key {
+        LedgerKey::ContractData(data) => {
+            let key = env.try_from_scval::<StorageKey>(&data.key);
+
+            match key {
+                Ok(key) => {
+                    match key {
+                        StorageKey::Color(miner, owner, color) => {}
+                        StorageKey::Glyph(hash) => {}
+                        // GlyphOwner(BytesN<32>),
+                        // GlyphMinter(BytesN<32>),
+                        // GlyphOffer(BytesN<32>),
+                        // AssetOffer(BytesN<32>, Address, i128), // glyph, sac, amount
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BackfillRequest {
+    envelope_xdr: String,
+    result_meta_xdr: String,
+    result_xdr: String,
+}
+
+#[no_mangle]
+pub extern "C" fn backfill() {
+    let env = EnvClient::empty();
+    let request: BackfillRequest = env.read_request_body();
+
+    let tx_envelope =
+        TransactionEnvelope::from_xdr_base64(request.envelope_xdr, Limits::none()).unwrap();
+    let transaction_result_meta = TransactionResultMeta {
+        result: TransactionResultPair {
+            transaction_hash: Hash([0; 32]),
+            result: TransactionResult::from_xdr_base64(request.result_xdr, Limits::none()).unwrap(),
+        },
+        fee_processing: LedgerEntryChanges(vec![].try_into().unwrap()),
+        tx_apply_processing: TransactionMeta::from_xdr_base64(
+            request.result_meta_xdr,
+            Limits::none(),
+        )
+        .unwrap(),
+    };
+
+    process_on_close(&env, &tx_envelope, &transaction_result_meta);
+
+    env.conclude("OK");
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetColorsRequest {
+    owner: String,
+}
+
+#[no_mangle]
+pub extern "C" fn get_colors() {
+    let env = EnvClient::empty();
+    let request: GetColorsRequest = env.read_request_body();
+
+    let colors: Vec<ZephyrColor> = env
+        .read_filter()
+        .column_equal_to("owner", request.owner)
+        .read()
+        .unwrap();
+
+    env.conclude(&colors);
 }
 
 // #[derive(Serialize, Deserialize)]

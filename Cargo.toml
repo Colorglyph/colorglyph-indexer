@@ -12,6 +12,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 hex = "0.4.3"
 stellar-strkey = "0.0.8"
+stellar-xdr = { version = "21.2.0", features = [
+    "next",
+    "curr",
+    "serde",
+    "base64",
+] }
 
 [lib]
 crate-type = ["cdylib"]
