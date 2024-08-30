@@ -1,1 +1,76 @@
 name = "zephyr-colorglyph-ingestion"
+
+# --- COLORS ---
+
+[[tables]]
+name = "colors"
+
+[[tables.columns]]
+name = "miner"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "owner"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "color"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "amount"
+col_type = "BYTEA"
+
+# --- GLYPHS ---
+
+[[tables]]
+name = "glyphs"
+
+[[tables.columns]]
+name = "hash"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "owner"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "minter"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "width"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "length"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "colors"
+col_type = "BYTEA"
+
+# --- OFFERS ---
+
+[[tables]]
+name = "offers"
+
+[[tables.columns]]
+name = "seller"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "selling"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "buying"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "amount"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "active"
+col_type = "BYTEA"
