@@ -50,27 +50,31 @@ name = "zephyr-colorglyph-ingestion"
 # name = "colors"
 # col_type = "BYTEA"
 
-# # --- OFFERS ---
+# --- OFFERS ---
 
-# [[tables]]
-# name = "offers"
+[[tables]]
+name = "offers"
 
-# [[tables.columns]]
-# name = "seller"
-# col_type = "BYTEA"
+[[tables.columns]]
+name = "seller"
+col_type = "BYTEA"
 
-# [[tables.columns]]
-# name = "selling"
-# col_type = "BYTEA"
-
-# [[tables.columns]]
-# name = "buying"
-# col_type = "BYTEA"
+[[tables.columns]]
+name = "selling"
+col_type = "BYTEA"
 
 # [[tables.columns]]
-# name = "amount"
+# name = "buyer"
 # col_type = "BYTEA"
 
-# [[tables.columns]]
-# name = "active"
-# col_type = "BYTEA"
+[[tables.columns]]
+name = "buying"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "amount"
+col_type = "BYTEA"
+
+[[tables.columns]]
+name = "active"
+col_type = "BYTEA"

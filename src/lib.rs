@@ -1,19 +1,28 @@
-use colorglyph::types::{Glyph, StorageKey};
+use colorglyph::types::{Glyph, Offer, StorageKey};
 use serde::{Deserialize, Serialize};
 use zephyr_sdk::{
     prelude::*,
-    soroban_sdk::xdr::{
-        FeeBumpTransaction, FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash,
-        HostFunction, InnerTransactionResult, InnerTransactionResultPair,
-        InnerTransactionResultResult, InvokeContractArgs, InvokeHostFunctionOp,
-        InvokeHostFunctionResult, LedgerEntry, LedgerEntryChange, LedgerEntryChanges,
-        LedgerEntryData, LedgerKey, Operation, OperationBody, OperationMeta, OperationResult,
-        OperationResultTr, ScAddress, ScVal, ToXdr, TransactionEnvelope, TransactionMeta,
-        TransactionMetaV3, TransactionResult, TransactionResultMeta, TransactionResultPair,
-        TransactionResultResult, TransactionV1Envelope, VecM,
+    soroban_sdk::{
+        xdr::{
+            ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
+            FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash, HostFunction,
+            InnerTransactionResult, InnerTransactionResultPair, InnerTransactionResultResult,
+            Int128Parts, InvokeContractArgs, InvokeHostFunctionOp, InvokeHostFunctionResult,
+            LedgerEntry, LedgerEntryChange, LedgerEntryChanges, LedgerEntryData, LedgerKey,
+            Operation, OperationBody, OperationMeta, OperationResult, OperationResultTr, ScAddress,
+            ScVal, ToXdr, TransactionEnvelope, TransactionMeta, TransactionMetaV3,
+            TransactionResult, TransactionResultMeta, TransactionResultPair,
+            TransactionResultResult, TransactionV1Envelope, VecM,
+        },
+        Address, Vec as SorobanVec,
     },
-    DatabaseDerive, EnvClient,
+    ContractDataEntry, DatabaseDerive, EnvClient,
 };
+
+// TODO ensure we're not duplicating rows anywhere
+// Can do by not filtering and just re-running catchups and ensure the size doesn't change
+
+// TODO update with the new way to simplify match hell
 
 pub(crate) const CONTRACT_ADDRESS: [u8; 32] = [
     // 40, 76, 4, 220, 239, 185, 174, 223, 218, 252, 223, 244, 153, 121, 154, 92, 108, 72, 251, 184,
@@ -47,14 +56,17 @@ pub struct ZephyrGlyph {
 pub struct ZephyrOffer {
     seller: ScVal,
     selling: ScVal,
+    // buyer: ScVal,
     buying: ScVal,
-    amount: i128,
+    amount: ScVal, // because currently i128 is broken
     active: ScVal,
 }
 
 #[no_mangle]
 pub extern "C" fn on_close() {
     let env = EnvClient::new();
+
+    env.log().debug(format!("Processing ledger {}", env.reader().ledger_sequence()), None);
 
     for (transaction_envelope, transaction_result_meta) in
         env.reader().envelopes_with_meta().into_iter()
@@ -104,13 +116,19 @@ fn process_operation_result(
     tx_envelope: &TransactionEnvelope,
     tx_apply_processing: &TransactionMeta,
 ) {
+    env.log().debug(format!("Found {} results", results.len()), None);
+
     for result in results.iter() {
         match result {
             OperationResult::OpInner(tr) => match tr {
                 OperationResultTr::InvokeHostFunction(result) => match result {
                     InvokeHostFunctionResult::Success(_) => match tx_apply_processing {
                         TransactionMeta::V3(meta) => {
+                            env.log().debug(format!("Found meta"), None);
+
                             let TransactionMetaV3 { operations, .. } = meta;
+
+                            env.log().debug(format!("Found {} operations", operations.len()), None);
 
                             for operation in operations.iter() {
                                 let OperationMeta { changes, .. } = operation;
@@ -326,8 +344,113 @@ fn process_ledger_entry_data(env: &EnvClient, data: &LedgerEntryData, kind: u8) 
                                     .unwrap();
                             }
                         }
-                        // GlyphOffer(BytesN<32>),
-                        // AssetOffer(BytesN<32>, Address, i128), // glyph, sac, amount
+
+                        // TODO for the offers we need to keep in mind offers are stored in vectors
+                        // meaning it will be difficult to dynamically remove offers unless we keep an eye on the before and after diff
+
+                        // TODO test all the offer types
+                            // Sell a glyph for a glyph
+                            // Sell an asset for a glyph
+
+                        // TODO implement update logic alongside put logic
+
+                        StorageKey::GlyphOffer(hash) => {
+                            let offers: SorobanVec<Offer> = env.from_scval(&entry.val);
+
+                            for offer in offers.iter() {
+                                match offer {
+                                    // Selling a glyph for a glyph
+                                    Offer::Glyph(buying_hash) => {
+                                        let owner = env.read_contract_entry_by_scvalkey(
+                                            CONTRACT_ADDRESS,
+                                            env.to_scval(StorageKey::GlyphOwner(hash.clone())),
+                                        );
+
+                                        if owner.is_ok() && owner.clone().unwrap().is_some() {
+                                            let ContractDataEntry { entry, .. } =
+                                                owner.unwrap().unwrap();
+                                            let LedgerEntry { data, .. } = entry;
+
+                                            if let LedgerEntryData::ContractData(
+                                                SorobanContractDataEntry { val, .. },
+                                            ) = data
+                                            {
+                                                let offer = ZephyrOffer {
+                                                    seller: val,                         // glyph owner
+                                                    selling: env.to_scval(hash.clone()), // sell glyph hash
+                                                    // buyer: ScVal::Void, // TODO Should we set this? Would require updating it whenever the glyph owner changed
+                                                    buying: env.to_scval(buying_hash), // buy glyph hash
+                                                    amount: ScVal::Void,
+                                                    active: ScVal::Bool(true),
+                                                };
+
+                                                env.put(&offer);
+                                            }
+                                        }
+                                    }
+                                    // Selling a glyph for an asset
+                                    Offer::Asset(sac, amount) => {
+                                        let owner = env.read_contract_entry_by_scvalkey(
+                                            CONTRACT_ADDRESS,
+                                            env.to_scval(StorageKey::GlyphOwner(hash.clone())),
+                                        );
+
+                                        if owner.is_ok() && owner.clone().unwrap().is_some() {
+                                            let ContractDataEntry { entry, .. } =
+                                                owner.unwrap().unwrap();
+                                            let LedgerEntry { data, .. } = entry;
+
+                                            if let LedgerEntryData::ContractData(
+                                                SorobanContractDataEntry { val, .. },
+                                            ) = data
+                                            {
+                                                let offer = ZephyrOffer {
+                                                    seller: val,                         // The owner of the glyph
+                                                    selling: env.to_scval(hash.clone()), // Should be the glyph
+                                                    // buyer: ScVal::Void, // There is no buyer
+                                                    buying: env.to_scval(sac), // The asset the seller wants
+                                                    amount: ScVal::I128(
+                                                        // The amount of the buying asset the seller wants
+                                                        Int128Parts {
+                                                            hi: (amount >> 64) as i64,
+                                                            lo: amount as u64,
+                                                        },
+                                                    ),
+                                                    active: ScVal::Bool(true),
+                                                };
+
+                                                env.put(&offer);
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        // NOTE: This should never happen
+                                        env.log()
+                                            .debug("Invalid offer found", None);
+                                    }
+                                }
+                            }
+                        }
+                        // All the folks (addresses) who want to buy a specific glyph (hash) with a specific asset (sac) for a specific amount
+                        StorageKey::AssetOffer(hash, sac, amount) => {
+                            let offers: SorobanVec<Address> = env.from_scval(&entry.val);
+
+                            for owner in offers.iter() {
+                                let offer = ZephyrOffer {
+                                    seller: env.to_scval(owner),
+                                    selling: env.to_scval(sac.clone()),
+                                    // buyer: ScVal::Void,
+                                    buying: env.to_scval(hash.clone()),
+                                    amount: ScVal::I128(Int128Parts {
+                                        hi: (amount >> 64) as i64,
+                                        lo: amount as u64,
+                                    }),
+                                    active: ScVal::Bool(true),
+                                };
+
+                                env.put(&offer);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -347,6 +470,7 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey, kind: u8) {
                 Ok(key) => {
                     match key {
                         // TODO this is a delete method, just keep that in mind, likely only need it for offers
+                        // Might be a little tricky as offers are stored as Vectors but in the db they're individual rows
 
                         // StorageKey::Color(miner, owner, color) => {}
                         // StorageKey::Glyph(hash) => {}
@@ -436,4 +560,26 @@ pub extern "C" fn get_glyphs() {
         .unwrap();
 
     env.conclude(&glyphs);
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetOffersRequest {
+    active: String,
+}
+
+#[no_mangle]
+pub extern "C" fn get_offers() {
+    let env = EnvClient::empty();
+    // let request: GetOffersRequest = env.read_request_body();
+    // let active = ScVal::from_xdr_base64(request.owner, Limits::none()).unwrap();
+
+    // request.active;
+
+    let offers = env
+        // .read_filter()
+        // .column_equal_to_xdr("active", &ScVal::Bool(true))
+        .read::<ZephyrOffer>();
+    // .unwrap();
+
+    env.conclude(&offers);
 }
