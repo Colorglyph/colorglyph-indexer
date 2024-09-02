@@ -757,22 +757,32 @@ pub extern "C" fn get_colors() {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetGlyphsRequest {
-    owner: String,
+    owner: Option<String>,
 }
 
 #[no_mangle]
 pub extern "C" fn get_glyphs() {
     let env = EnvClient::empty();
     let request: GetGlyphsRequest = env.read_request_body();
-    let owner = address_string_to_scval(&env, &request.owner);
 
-    let glyphs = env
-        .read_filter()
-        .column_equal_to_xdr("owner", &owner)
-        .read::<ZephyrGlyph>()
-        .unwrap();
+    match request.owner {
+        Some(owner) => {
+            let owner = address_string_to_scval(&env, &owner);
+            let glyphs = env
+                .read_filter()
+                .column_equal_to_xdr("owner", &owner)
+                .read::<ZephyrGlyph>()
+                .unwrap();
 
-    env.conclude(&glyphs);
+            env.conclude(&glyphs);
+        }
+        None => {
+            let glyphs = env
+                .read::<ZephyrGlyph>();
+
+            env.conclude(&glyphs);
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
