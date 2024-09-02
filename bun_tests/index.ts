@@ -21,9 +21,9 @@ async function get_transactions(cursor?: string) {
         const tx = new Transaction(envelope_xdr, Networks.TESTNET);
 
         for (const op of tx.operations) {
-            const fn = (op as Operation.InvokeHostFunction)?.func?.invokeContract()?.functionName().toString();
+            // const fn = (op as Operation.InvokeHostFunction)?.func?.invokeContract()?.functionName().toString();
 
-            if (fn && fn.includes('offer'))
+            // if (fn && fn.includes('offer'))
                 await backfill(hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr)
         }
 

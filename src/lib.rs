@@ -4,25 +4,24 @@ use zephyr_sdk::{
     prelude::*,
     soroban_sdk::{
         xdr::{
-            ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
+            AccountId, ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
             FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash, HostFunction,
             InnerTransactionResult, InnerTransactionResultPair, InnerTransactionResultResult,
             Int128Parts, InvokeContractArgs, InvokeHostFunctionOp, InvokeHostFunctionResult,
             LedgerEntry, LedgerEntryChange, LedgerEntryChanges, LedgerEntryData, LedgerKey,
             LedgerKeyContractData, Operation, OperationBody, OperationMeta, OperationResult,
-            OperationResultTr, ScAddress, ScVal, ToXdr, TransactionEnvelope, TransactionMeta,
-            TransactionMetaV3, TransactionResult, TransactionResultMeta, TransactionResultPair,
-            TransactionResultResult, TransactionV1Envelope, VecM,
+            OperationResultTr, PublicKey, ScAddress, ScVal, ToXdr, TransactionEnvelope,
+            TransactionMeta, TransactionMetaV3, TransactionResult, TransactionResultMeta,
+            TransactionResultPair, TransactionResultResult, TransactionV1Envelope, Uint256, VecM,
         },
-        Address, Vec as SorobanVec,
+        Address, Bytes, Vec as SorobanVec,
     },
     ContractDataEntry, DatabaseDerive, EnvClient,
 };
 
-// TODO ensure we're not duplicating rows anywhere
-// Can do by not filtering and just re-running catchups and ensure the size doesn't change
-
-// TODO update with the new way to simplify match hell
+/* TODO clean up the code
+    with the new way to simplify match hell
+*/
 
 pub(crate) const CONTRACT_ADDRESS: [u8; 32] = [
     // 40, 76, 4, 220, 239, 185, 174, 223, 218, 252, 223, 244, 153, 121, 154, 92, 108, 72, 251, 184,
@@ -284,8 +283,6 @@ fn process_ledger_entry_data(
 
                             env.put(&glyph);
                         } else {
-                            // TODO compress this block and the GlyphOwner and GlyphMinter into a single function
-
                             let mut existing = existing[0].clone();
 
                             existing.colors = colors;
@@ -334,15 +331,6 @@ fn process_ledger_entry_data(
                                 .unwrap();
                         }
                     }
-
-                    // TODO for the offers we need to keep in mind offers are stored in vectors
-                    // meaning it will be difficult to dynamically remove offers unless we keep an eye on the before and after diff
-
-                    // TODO test all the offer types
-                    // Sell a glyph for a glyph
-                    // Sell an asset for a glyph
-
-                    // TODO implement update logic alongside put logic
                     StorageKey::GlyphOffer(hash) => {
                         let offers: SorobanVec<Offer> = env.from_scval(val);
                         let diff_offers =
@@ -608,13 +596,10 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
     if let LedgerKey::ContractData(LedgerKeyContractData { key, .. }) = key {
         if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
             match key {
-                // TODO this is a delete method, just keep that in mind, likely only need it for offers
-                // Might be a little tricky as offers are stored as Vectors but in the db they're individual rows
-
                 // StorageKey::Color(miner, owner, color) => {}
                 // StorageKey::Glyph(hash) => {}
-                // StorageKey::GlyphOwner(BytesN<32>),
-                // StorageKey::GlyphMinter(BytesN<32>),
+                // StorageKey::GlyphOwner(hash),
+                // StorageKey::GlyphMinter(hash),
                 StorageKey::GlyphOffer(hash) => {
                     let selling = env.to_scval(hash.clone());
                     let owner = &env.read_contract_entry_by_scvalkey(
@@ -682,6 +667,25 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
     }
 }
 
+fn address_string_to_scval(env: &EnvClient, address: &String) -> ScVal {
+    let mut public_key = [0u8; 32];
+
+    let public_key_bytes = address.to_string();
+    let public_key_bytes = Address::from_string_bytes(&Bytes::from_slice(
+        &env.soroban(),
+        public_key_bytes.as_bytes(),
+    ));
+    let public_key_bytes = public_key_bytes.to_xdr(env.soroban());
+
+    public_key_bytes
+        .slice(public_key_bytes.len() - 32..)
+        .copy_into_slice(&mut public_key);
+
+    ScVal::Address(ScAddress::Account(AccountId(
+        PublicKey::PublicKeyTypeEd25519(Uint256(public_key)),
+    )))
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct BackfillRequest {
     envelope_xdr: String,
@@ -718,22 +722,37 @@ pub extern "C" fn backfill() {
 pub struct GetColorsRequest {
     owner: String,
 }
-
-// TODO in the get methods consider processing the data a bit more to tighten up the amount of data we're returning
+#[derive(Serialize, Deserialize)]
+pub struct GetColorsResponse {
+    miner: String,
+    owner: String,
+    color: u32,
+    amount: u32,
+}
 
 #[no_mangle]
 pub extern "C" fn get_colors() {
     let env = EnvClient::empty();
     let request: GetColorsRequest = env.read_request_body();
-    let owner = ScVal::from_xdr_base64(request.owner, Limits::none()).unwrap();
+    let owner = address_string_to_scval(&env, &request.owner);
 
     let colors = env
         .read_filter()
         .column_equal_to_xdr("owner", &owner)
         .read::<ZephyrColor>()
         .unwrap();
+    // This actually takes the request from ~ 1 sec to ~ 12 seconds
+    // .into_iter()
+    // .map(|color| {
+    //     GetColorsResponse {
+    //         miner: soroban_string_to_alloc_string(&env, env.from_scval::<Address>(&color.miner).to_string()),
+    //         owner: soroban_string_to_alloc_string(&env, env.from_scval::<Address>(&color.owner).to_string()),
+    //         color: color.color,
+    //         amount: color.amount
+    //     }
+    // }).collect::<Vec<GetColorsResponse>>();
 
-    env.conclude(&colors);
+    env.conclude(colors);
 }
 
 #[derive(Serialize, Deserialize)]
@@ -745,7 +764,7 @@ pub struct GetGlyphsRequest {
 pub extern "C" fn get_glyphs() {
     let env = EnvClient::empty();
     let request: GetGlyphsRequest = env.read_request_body();
-    let owner = ScVal::from_xdr_base64(request.owner, Limits::none()).unwrap();
+    let owner = address_string_to_scval(&env, &request.owner);
 
     let glyphs = env
         .read_filter()
@@ -758,22 +777,21 @@ pub extern "C" fn get_glyphs() {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetOffersRequest {
-    active: String,
+    seller: String,
 }
 
 #[no_mangle]
 pub extern "C" fn get_offers() {
     let env = EnvClient::empty();
-    // let request: GetOffersRequest = env.read_request_body();
-    // let active = ScVal::from_xdr_base64(request.owner, Limits::none()).unwrap();
-
-    // request.active;
+    let request: GetOffersRequest = env.read_request_body();
+    let seller = address_string_to_scval(&env, &request.seller);
 
     let offers = env
-        // .read_filter()
-        // .column_equal_to_xdr("active", &ScVal::Bool(true))
-        .read::<ZephyrOffer>();
-    // .unwrap();
+        .read_filter()
+        .column_equal_to_xdr("seller", &seller)
+        .column_equal_to_xdr("active", &ScVal::Bool(true))
+        .read::<ZephyrOffer>()
+        .unwrap();
 
     env.conclude(&offers);
 }
