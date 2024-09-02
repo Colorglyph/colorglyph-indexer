@@ -9,11 +9,12 @@ use zephyr_sdk::{
             InnerTransactionResult, InnerTransactionResultPair, InnerTransactionResultResult,
             Int128Parts, InvokeContractArgs, InvokeHostFunctionOp, InvokeHostFunctionResult,
             LedgerEntry, LedgerEntryChange, LedgerEntryChanges, LedgerEntryData, LedgerKey,
-            Operation, OperationBody, OperationMeta, OperationResult, OperationResultTr, ScAddress,
-            ScVal, ToXdr, TransactionEnvelope, TransactionMeta, TransactionMetaV3,
-            TransactionResult, TransactionResultMeta, TransactionResultPair,
+            LedgerKeyContractData, Operation, OperationBody, OperationMeta, OperationResult,
+            OperationResultTr, ScAddress, ScVal, ToXdr, TransactionEnvelope, TransactionMeta,
+            TransactionMetaV3, TransactionResult, TransactionResultMeta, TransactionResultPair,
             TransactionResultResult, TransactionV1Envelope, VecM,
-        }, Address, Vec as SorobanVec
+        },
+        Address, Vec as SorobanVec,
     },
     ContractDataEntry, DatabaseDerive, EnvClient,
 };
@@ -206,14 +207,12 @@ fn process_invoke_host_function_op(
                 for change in changes.iter() {
                     match change {
                         LedgerEntryChange::Created(LedgerEntry { data, .. }) => {
-                            process_ledger_entry_data(&env, data, &changes, 1)
+                            process_ledger_entry_data(&env, data, None)
                         }
                         LedgerEntryChange::Updated(LedgerEntry { data, .. }) => {
-                            process_ledger_entry_data(&env, data, &changes, 2)
+                            process_ledger_entry_data(&env, data, Some(changes))
                         }
-                        LedgerEntryChange::Removed(key) => {
-                            process_ledger_key(&env, key, &changes, 0)
-                        }
+                        LedgerEntryChange::Removed(key) => process_ledger_key(&env, key),
                         _ => {}
                     }
                 }
@@ -226,8 +225,7 @@ fn process_invoke_host_function_op(
 fn process_ledger_entry_data(
     env: &EnvClient,
     data: &LedgerEntryData,
-    changes: &LedgerEntryChanges,
-    kind: u8,
+    changes: Option<&LedgerEntryChanges>,
 ) {
     match data {
         LedgerEntryData::ContractData(SorobanContractDataEntry { key, val, .. }) => {
@@ -348,7 +346,7 @@ fn process_ledger_entry_data(
                     StorageKey::GlyphOffer(hash) => {
                         let offers: SorobanVec<Offer> = env.from_scval(val);
                         let diff_offers =
-                            get_diff_offers(&env, &key, &changes, &Offers::Offers(offers.clone()));
+                            get_diff_offers(&env, &key, changes, &Offers::Offers(offers.clone()));
                         let owner = &env.read_contract_entry_by_scvalkey(
                             CONTRACT_ADDRESS,
                             env.to_scval(StorageKey::GlyphOwner(hash.clone())),
@@ -409,10 +407,8 @@ fn process_ledger_entry_data(
                                         .read::<ZephyrOffer>()
                                         .unwrap();
 
-                                    env.log().debug(format!("existing {}", existing.len()), None);
-
                                     if existing.len() == 0 {
-                                        // env.put(&o);
+                                        env.put(&o);
                                     } else {
                                         env.update()
                                             .column_equal_to_xdr("seller", &o.seller)
@@ -479,7 +475,7 @@ fn process_ledger_entry_data(
                         let diff_offers = get_diff_offers(
                             &env,
                             &key,
-                            &changes,
+                            changes,
                             &Offers::Addresses(offers.clone()),
                         );
 
@@ -505,10 +501,8 @@ fn process_ledger_entry_data(
                                 .read::<ZephyrOffer>()
                                 .unwrap();
 
-                            env.log().debug(format!("existing {}", existing.len()), None);
-
                             if existing.len() == 0 {
-                                // env.put(&offer);
+                                env.put(&offer);
                             } else {
                                 env.update()
                                     .column_equal_to_xdr("seller", &offer.seller)
@@ -563,10 +557,14 @@ pub enum Offers {
 fn get_diff_offers(
     env: &EnvClient,
     key: &StorageKey,
-    changes: &LedgerEntryChanges,
+    changes: Option<&LedgerEntryChanges>,
     offers: &Offers,
 ) -> Option<Offers> {
-    for change in changes.iter() {
+    if changes.is_none() {
+        return None;
+    }
+
+    for change in changes.unwrap().iter() {
         if let LedgerEntryChange::State(LedgerEntry { data, .. }) = change {
             if let LedgerEntryData::ContractData(SorobanContractDataEntry { key: k, val, .. }) =
                 data
@@ -575,22 +573,22 @@ fn get_diff_offers(
                     if &k == key {
                         match offers {
                             Offers::Offers(offers) => {
-                                let mut change_offers: SorobanVec<Offer> = env.from_scval(val);
+                                let mut change_offers = SorobanVec::new(env.soroban());
 
-                                for offer in change_offers.clone() {
-                                    if let Some(index) = offers.first_index_of(offer) {
-                                        change_offers.remove(index);
+                                for offer in env.from_scval::<SorobanVec<Offer>>(val).iter() {
+                                    if !offers.contains(offer.clone()) {
+                                        change_offers.push_back(offer);
                                     }
                                 }
 
                                 return Some(Offers::Offers(change_offers));
                             }
                             Offers::Addresses(offers) => {
-                                let mut change_offers: SorobanVec<Address> = env.from_scval(val);
+                                let mut change_offers = SorobanVec::new(env.soroban());
 
-                                for offer in change_offers.clone() {
-                                    if let Some(index) = offers.first_index_of(offer) {
-                                        change_offers.remove(index);
+                                for offer in env.from_scval::<SorobanVec<Address>>(val).iter() {
+                                    if !offers.contains(offer.clone()) {
+                                        change_offers.push_back(offer);
                                     }
                                 }
 
@@ -606,31 +604,81 @@ fn get_diff_offers(
     None
 }
 
-fn process_ledger_key(env: &EnvClient, key: &LedgerKey, changes: &LedgerEntryChanges, kind: u8) {
-    match key {
-        LedgerKey::ContractData(data) => {
-            let key = env.try_from_scval::<StorageKey>(&data.key);
-
+fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
+    if let LedgerKey::ContractData(LedgerKeyContractData { key, .. }) = key {
+        if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
             match key {
-                Ok(key) => {
-                    match key {
-                        // TODO this is a delete method, just keep that in mind, likely only need it for offers
-                        // Might be a little tricky as offers are stored as Vectors but in the db they're individual rows
+                // TODO this is a delete method, just keep that in mind, likely only need it for offers
+                // Might be a little tricky as offers are stored as Vectors but in the db they're individual rows
 
-                        // StorageKey::Color(miner, owner, color) => {}
-                        // StorageKey::Glyph(hash) => {}
-                        // GlyphOwner(BytesN<32>),
-                        // GlyphMinter(BytesN<32>),
+                // StorageKey::Color(miner, owner, color) => {}
+                // StorageKey::Glyph(hash) => {}
+                // StorageKey::GlyphOwner(BytesN<32>),
+                // StorageKey::GlyphMinter(BytesN<32>),
+                StorageKey::GlyphOffer(hash) => {
+                    let selling = env.to_scval(hash.clone());
+                    let owner = &env.read_contract_entry_by_scvalkey(
+                        CONTRACT_ADDRESS,
+                        env.to_scval(StorageKey::GlyphOwner(hash.clone())),
+                    );
 
-                        // GlyphOffer(BytesN<32>),
-                        // AssetOffer(BytesN<32>, Address, i128), // glyph, sac, amount
-                        _ => {}
+                    if owner.is_ok() && owner.clone().unwrap().is_some() {
+                        let ContractDataEntry { entry, .. } = owner.clone().unwrap().unwrap();
+                        let LedgerEntry { data, .. } = entry;
+
+                        if let LedgerEntryData::ContractData(SorobanContractDataEntry {
+                            val: owner,
+                            ..
+                        }) = data
+                        {
+                            let offers = env
+                                .read_filter()
+                                .column_equal_to_xdr("selling", &selling)
+                                .read::<ZephyrOffer>()
+                                .unwrap();
+
+                            for mut offer in offers {
+                                offer.seller = owner.clone();
+                                offer.active = ScVal::Bool(false);
+
+                                env.update()
+                                    .column_equal_to_xdr("selling", &selling)
+                                    .execute(&offer)
+                                    .unwrap();
+                            }
+                        }
+                    }
+                }
+                StorageKey::AssetOffer(hash, sac, amount) => {
+                    let selling = env.to_scval(hash.clone());
+                    let buying = env.to_scval(sac.clone());
+                    let amount = ScVal::I128(Int128Parts {
+                        hi: (amount >> 64) as i64,
+                        lo: amount as u64,
+                    });
+
+                    let offers = env
+                        .read_filter()
+                        .column_equal_to_xdr("selling", &selling)
+                        .column_equal_to_xdr("buying", &buying)
+                        .column_equal_to_xdr("amount", &amount)
+                        .read::<ZephyrOffer>()
+                        .unwrap();
+
+                    for mut offer in offers {
+                        offer.active = ScVal::Bool(false);
+
+                        env.update()
+                            .column_equal_to_xdr("selling", &selling)
+                            .column_equal_to_xdr("buying", &buying)
+                            .column_equal_to_xdr("amount", &amount)
+                            .execute(&offer)
+                            .unwrap();
                     }
                 }
                 _ => {}
             }
         }
-        _ => {}
     }
 }
 
