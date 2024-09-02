@@ -63,10 +63,6 @@ col_type = "BYTEA"
 name = "selling"
 col_type = "BYTEA"
 
-# [[tables.columns]]
-# name = "buyer"
-# col_type = "BYTEA"
-
 [[tables.columns]]
 name = "buying"
 col_type = "BYTEA"
