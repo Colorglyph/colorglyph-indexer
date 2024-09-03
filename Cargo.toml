@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 zephyr-sdk = { version = "0.2.2-rc2" }
 colorglyph = { git = "https://github.com/Colorglyph/colorglyph-soroban" }
 serde = { version = "1.0", features = ["derive"] }
+hex = "0.4.3"
 
 [profile.release]
 opt-level = "z"

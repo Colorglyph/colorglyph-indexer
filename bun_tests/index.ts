@@ -2,12 +2,34 @@ import { Horizon, Networks, Operation, Transaction } from '@stellar/stellar-sdk'
 
 const horizon = new Horizon.Server('https://horizon-testnet.stellar.org');
 
-const account = 'GBGP5SD75TDB2ZL7JDJEFPSWDBEQRDJ4757ZXL57TOOQJSMWROT5JYKD';
+const accounts = [
+    'GBGP5SD75TDB2ZL7JDJEFPSWDBEQRDJ4757ZXL57TOOQJSMWROT5JYKD',
+    'GAID7BB5TASKY4JBDBQX2IVD33CUYXUPDS2O5NAVAP277PLMHFE6AO3Y',
+];
 
-get_transactions();
+const transactions: Horizon.ServerApi.TransactionRecord[] = []
 
-async function get_transactions(cursor?: string) {
-    const res = await horizon
+for (const account of accounts) {
+    await get_transactions(account);
+}
+
+transactions.sort((a, b) => a.ledger_attr - b.ledger_attr)
+
+for (const { hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr } of transactions) {
+    const tx = new Transaction(envelope_xdr, Networks.TESTNET);
+
+    for (const op of tx.operations) {
+        const fn = (op as Operation.InvokeHostFunction)?.func?.invokeContract()?.functionName().toString();
+
+        if (
+            fn 
+            // && fn.includes('offer')
+        ) await backfill(hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr)
+    }
+}
+
+async function get_transactions(account: string, cursor?: string) {
+    const { records } = await horizon
         .transactions()
         .forAccount(account)
         .limit(200)
@@ -15,23 +37,12 @@ async function get_transactions(cursor?: string) {
         .order('asc')
         .cursor(cursor || '')
         .call()
-        .then(({ records }) => records)
 
-    for (const { hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr, paging_token } of res) {
-        const tx = new Transaction(envelope_xdr, Networks.TESTNET);
+    transactions.push(...records)
+    cursor = records[records.length - 1].paging_token
 
-        for (const op of tx.operations) {
-            // const fn = (op as Operation.InvokeHostFunction)?.func?.invokeContract()?.functionName().toString();
-
-            // if (fn && fn.includes('offer'))
-                await backfill(hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr)
-        }
-
-        cursor = paging_token
-    }
-
-    if (res.length === 200)
-        get_transactions(cursor)
+    if (records.length === 200)
+        return get_transactions(account, cursor)
 }
 
 async function backfill(hash: string, ledger_attr: number, envelope_xdr: string, result_meta_xdr: string, result_xdr: string) {

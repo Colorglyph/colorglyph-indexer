@@ -1,64 +1,43 @@
+use core::str::FromStr;
+
 use colorglyph::types::{Glyph, Offer, StorageKey};
 use serde::{Deserialize, Serialize};
+use types::{
+    Offers, ZephyrColor, ZephyrColorAmount, ZephyrColorEmpty, ZephyrGlyph, ZephyrGlyphEmpty,
+    ZephyrGlyphMinter, ZephyrGlyphNoColors, ZephyrGlyphOwner, ZephyrGlyphWidthLengthColors,
+    ZephyrOffer, ZephyrOfferActive, ZephyrOfferEmpty, ZephyrOfferNoActive,
+};
 use zephyr_sdk::{
     prelude::*,
     soroban_sdk::{
         xdr::{
-            AccountId, ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
+            AccountId, BytesM, ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
             FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash, HostFunction,
             InnerTransactionResult, InnerTransactionResultPair, InnerTransactionResultResult,
             Int128Parts, InvokeContractArgs, InvokeHostFunctionOp, InvokeHostFunctionResult,
             LedgerEntry, LedgerEntryChange, LedgerEntryChanges, LedgerEntryData, LedgerKey,
             LedgerKeyContractData, Operation, OperationBody, OperationMeta, OperationResult,
-            OperationResultTr, PublicKey, ScAddress, ScVal, ToXdr, TransactionEnvelope,
+            OperationResultTr, PublicKey, ScAddress, ScBytes, ScVal, ToXdr, TransactionEnvelope,
             TransactionMeta, TransactionMetaV3, TransactionResult, TransactionResultMeta,
             TransactionResultPair, TransactionResultResult, TransactionV1Envelope, Uint256, VecM,
         },
         Address, Bytes, Vec as SorobanVec,
     },
-    ContractDataEntry, DatabaseDerive, EnvClient,
+    ContractDataEntry, EnvClient,
 };
+
+mod types;
 
 /* TODO clean up the code
     with the new way to simplify match hell
 */
 
-pub(crate) const CONTRACT_ADDRESS: [u8; 32] = [
+pub const CONTRACT_ADDRESS: [u8; 32] = [
     // 40, 76, 4, 220, 239, 185, 174, 223, 218, 252, 223, 244, 153, 121, 154, 92, 108, 72, 251, 184,
     // 70, 166, 134, 111, 165, 220, 84, 86, 184, 196, 55, 73,
     35, 153, 28, 126, 10, 228, 176, 244, 141, 44, 127, 232, 35, 149, 106, 117, 122, 30, 228, 24,
     162, 111, 254, 172, 91, 128, 129, 68, 223, 102, 102, 140,
 ];
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("colors")]
-pub struct ZephyrColor {
-    miner: ScVal,
-    owner: ScVal,
-    color: u32,
-    amount: u32,
-}
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyph {
-    hash: ScVal,
-    owner: ScVal,
-    minter: ScVal,
-    width: u32,
-    length: u32,
-    colors: ScVal,
-}
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("offers")]
-pub struct ZephyrOffer {
-    seller: ScVal,
-    selling: ScVal,
-    buying: ScVal,
-    amount: ScVal, // because currently i128 is broken
-    active: ScVal,
-}
 
 #[no_mangle]
 pub extern "C" fn on_close() {
@@ -232,102 +211,94 @@ fn process_ledger_entry_data(
                 match &key {
                     StorageKey::Color(miner, owner, color) => {
                         let amount = env.from_scval(val);
-                        let color = ZephyrColor {
-                            miner: env.to_scval(miner),
-                            owner: env.to_scval(owner),
-                            color: *color,
-                            amount,
-                        };
+                        let miner = env.to_scval(miner);
+                        let owner = env.to_scval(owner);
                         let existing = &env
                             .read_filter()
-                            .column_equal_to_xdr("miner", &color.miner)
-                            .column_equal_to_xdr("owner", &color.owner)
-                            .column_equal_to("color", color.color)
-                            .read::<ZephyrColor>()
+                            .column_equal_to_xdr("miner", &miner)
+                            .column_equal_to_xdr("owner", &owner)
+                            .column_equal_to("color", *color)
+                            .read::<ZephyrColorEmpty>()
                             .unwrap();
 
                         if existing.len() == 0 {
-                            env.put(&color);
+                            env.put(&ZephyrColor {
+                                miner,
+                                owner,
+                                color: *color,
+                                amount,
+                            });
                         } else {
-                            let mut existing = existing[0].clone();
-
-                            existing.amount = amount;
-
                             env.update()
-                                .column_equal_to_xdr("miner", &color.miner)
-                                .column_equal_to_xdr("owner", &color.owner)
-                                .column_equal_to("color", color.color)
-                                .execute(&existing)
+                                .column_equal_to_xdr("miner", &miner)
+                                .column_equal_to_xdr("owner", &owner)
+                                .column_equal_to("color", *color)
+                                .execute(&ZephyrColorAmount { amount })
                                 .unwrap();
                         }
                     }
                     StorageKey::Glyph(hash) => {
+                        let hash = env.to_scval(hash.clone());
                         let glyph: Glyph = env.from_scval(val);
                         let colors = env.to_scval(glyph.colors);
 
                         let existing = &env
                             .read_filter()
-                            .column_equal_to_xdr("hash", &env.to_scval(hash.clone()))
-                            .read::<ZephyrGlyph>()
+                            .column_equal_to_xdr("hash", &hash)
+                            .read::<ZephyrGlyphEmpty>()
                             .unwrap();
 
                         if existing.len() == 0 {
-                            let glyph = ZephyrGlyph {
-                                hash: env.to_scval(hash.clone()),
+                            env.put(&ZephyrGlyph {
+                                hash,
                                 owner: ScVal::Void,
                                 minter: ScVal::Void,
                                 width: glyph.width,
                                 length: glyph.length,
                                 colors,
+                            });
+                        } else {
+                            let glyph = ZephyrGlyphWidthLengthColors {
+                                width: glyph.width,
+                                length: glyph.length,
+                                colors,
                             };
 
-                            env.put(&glyph);
-                        } else {
-                            let mut existing = existing[0].clone();
-
-                            existing.colors = colors;
-                            existing.width = glyph.width;
-                            existing.length = glyph.length;
-
                             env.update()
-                                .column_equal_to_xdr("hash", &env.to_scval(hash.clone()))
-                                .execute(&existing)
+                                .column_equal_to_xdr("hash", &hash)
+                                .execute(&glyph)
                                 .unwrap();
                         }
                     }
                     StorageKey::GlyphOwner(hash) => {
+                        let hash = env.to_scval(hash.clone());
                         let existing = &env
                             .read_filter()
-                            .column_equal_to_xdr("hash", &env.to_scval(hash.clone()))
-                            .read::<ZephyrGlyph>()
+                            .column_equal_to_xdr("hash", &hash)
+                            .read::<ZephyrGlyphEmpty>()
                             .unwrap();
 
                         if existing.len() > 0 {
-                            let mut existing = existing[0].clone();
-
-                            existing.owner = val.clone();
-
                             env.update()
-                                .column_equal_to_xdr("hash", &env.to_scval(hash.clone()))
-                                .execute(&existing)
+                                .column_equal_to_xdr("hash", &hash)
+                                .execute(&ZephyrGlyphOwner { owner: val.clone() })
                                 .unwrap();
                         }
                     }
                     StorageKey::GlyphMinter(hash) => {
+                        let hash = env.to_scval(hash.clone());
                         let existing = &env
                             .read_filter()
-                            .column_equal_to_xdr("hash", &env.to_scval(hash.clone()))
-                            .read::<ZephyrGlyph>()
+                            .column_equal_to_xdr("hash", &hash)
+                            .read::<ZephyrGlyphEmpty>()
                             .unwrap();
 
                         if existing.len() > 0 {
-                            let mut existing = existing[0].clone();
-
-                            existing.minter = val.clone();
-
                             env.update()
-                                .column_equal_to_xdr("hash", &env.to_scval(hash.clone()))
-                                .execute(&existing)
+                                .column_equal_to_xdr("hash", &hash)
+                                .execute(&ZephyrGlyphMinter {
+                                    minter: val.clone(),
+                                })
                                 .unwrap();
                         }
                     }
@@ -351,34 +322,27 @@ fn process_ledger_entry_data(
                             {
                                 // Add or update
                                 for offer in offers.iter() {
-                                    let o: ZephyrOffer;
+                                    let seller: ScVal = owner.clone();
+                                    let selling: ScVal = env.to_scval(hash.clone());
+                                    let buying: ScVal;
+                                    let amount: ScVal;
 
                                     match offer {
                                         // Selling a glyph for a glyph
                                         Offer::Glyph(buying_hash) => {
-                                            o = ZephyrOffer {
-                                                seller: owner.clone(),               // glyph owner
-                                                selling: env.to_scval(hash.clone()), // sell glyph hash
-                                                buying: env.to_scval(buying_hash), // buy glyph hash
-                                                amount: ScVal::Void,
-                                                active: ScVal::Bool(true),
-                                            };
+                                            buying = env.to_scval(buying_hash);
+                                            amount = ScVal::Void;
                                         }
                                         // Selling a glyph for an asset
-                                        Offer::Asset(sac, amount) => {
-                                            o = ZephyrOffer {
-                                                seller: owner.clone(),               // The owner of the glyph
-                                                selling: env.to_scval(hash.clone()), // Should be the glyph
-                                                buying: env.to_scval(sac), // The asset the seller wants
-                                                amount: ScVal::I128(
-                                                    // The amount of the buying asset the seller wants
-                                                    Int128Parts {
-                                                        hi: (amount >> 64) as i64,
-                                                        lo: amount as u64,
-                                                    },
-                                                ),
-                                                active: ScVal::Bool(true),
-                                            };
+                                        Offer::Asset(sac, a) => {
+                                            buying = env.to_scval(sac);
+                                            amount = ScVal::I128(
+                                                // The amount of the buying asset the seller wants
+                                                Int128Parts {
+                                                    hi: (a >> 64) as i64,
+                                                    lo: a as u64,
+                                                },
+                                            );
                                         }
                                         _ => {
                                             panic!("Invalid offer type")
@@ -388,22 +352,30 @@ fn process_ledger_entry_data(
                                     // update if exists, otherwise put
                                     let existing = env
                                         .read_filter()
-                                        .column_equal_to_xdr("seller", &o.seller)
-                                        .column_equal_to_xdr("selling", &o.selling)
-                                        .column_equal_to_xdr("buying", &o.buying)
-                                        .column_equal_to_xdr("amount", &o.amount)
-                                        .read::<ZephyrOffer>()
+                                        .column_equal_to_xdr("seller", &seller)
+                                        .column_equal_to_xdr("selling", &selling)
+                                        .column_equal_to_xdr("buying", &buying)
+                                        .column_equal_to_xdr("amount", &amount)
+                                        .read::<ZephyrOfferEmpty>()
                                         .unwrap();
 
                                     if existing.len() == 0 {
-                                        env.put(&o);
+                                        env.put(&ZephyrOffer {
+                                            seller,
+                                            selling,
+                                            buying,
+                                            amount,
+                                            active: ScVal::Bool(true),
+                                        });
                                     } else {
                                         env.update()
-                                            .column_equal_to_xdr("seller", &o.seller)
-                                            .column_equal_to_xdr("selling", &o.selling)
-                                            .column_equal_to_xdr("buying", &o.buying)
-                                            .column_equal_to_xdr("amount", &o.amount)
-                                            .execute(&o)
+                                            .column_equal_to_xdr("seller", &seller)
+                                            .column_equal_to_xdr("selling", &selling)
+                                            .column_equal_to_xdr("buying", &buying)
+                                            .column_equal_to_xdr("amount", &amount)
+                                            .execute(&ZephyrOfferActive {
+                                                active: ScVal::Bool(true),
+                                            })
                                             .unwrap();
                                     }
                                 }
@@ -412,32 +384,23 @@ fn process_ledger_entry_data(
                                 if let Some(offers) = diff_offers {
                                     if let Offers::Offers(offers) = offers {
                                         for offer in offers.iter() {
-                                            let o: ZephyrOffer;
+                                            let buying: ScVal;
+                                            let amount: ScVal;
 
                                             match offer {
                                                 Offer::Glyph(buying_hash) => {
-                                                    o = ZephyrOffer {
-                                                        seller: owner.clone(),               // glyph owner
-                                                        selling: env.to_scval(hash.clone()), // sell glyph hash
-                                                        buying: env.to_scval(buying_hash), // buy glyph hash
-                                                        amount: ScVal::Void,
-                                                        active: ScVal::Bool(false),
-                                                    };
+                                                    buying = env.to_scval(buying_hash);
+                                                    amount = ScVal::Void;
                                                 }
-                                                Offer::Asset(sac, amount) => {
-                                                    o = ZephyrOffer {
-                                                        seller: owner.clone(),               // The owner of the glyph
-                                                        selling: env.to_scval(hash.clone()), // Should be the glyph
-                                                        buying: env.to_scval(sac), // The asset the seller wants
-                                                        amount: ScVal::I128(
-                                                            // The amount of the buying asset the seller wants
-                                                            Int128Parts {
-                                                                hi: (amount >> 64) as i64,
-                                                                lo: amount as u64,
-                                                            },
-                                                        ),
-                                                        active: ScVal::Bool(false),
-                                                    };
+                                                Offer::Asset(sac, a) => {
+                                                    buying = env.to_scval(sac); // The asset the seller wants
+                                                    amount = ScVal::I128(
+                                                        // The amount of the buying asset the seller wants
+                                                        Int128Parts {
+                                                            hi: (a >> 64) as i64,
+                                                            lo: a as u64,
+                                                        },
+                                                    );
                                                 }
                                                 _ => {
                                                     panic!("Invalid offer type")
@@ -445,11 +408,11 @@ fn process_ledger_entry_data(
                                             }
 
                                             env.update()
-                                                .column_equal_to_xdr("seller", &o.seller)
-                                                .column_equal_to_xdr("selling", &o.selling)
-                                                .column_equal_to_xdr("buying", &o.buying)
-                                                .column_equal_to_xdr("amount", &o.amount)
-                                                .execute(&o)
+                                                .column_equal_to_xdr("seller", &owner.clone())
+                                                .column_equal_to_xdr("selling", &env.to_scval(hash.clone()))
+                                                .column_equal_to_xdr("buying", &buying)
+                                                .column_equal_to_xdr("amount", &amount)
+                                                .execute(&ZephyrOfferActive { active: ScVal::Bool(false) })
                                                 .unwrap();
                                         }
                                     }
@@ -469,35 +432,40 @@ fn process_ledger_entry_data(
 
                         // Add or update
                         for owner in offers.iter() {
-                            let offer = ZephyrOffer {
-                                seller: env.to_scval(owner),
-                                selling: env.to_scval(sac.clone()),
-                                buying: env.to_scval(hash.clone()),
-                                amount: ScVal::I128(Int128Parts {
-                                    hi: (amount >> 64) as i64,
-                                    lo: *amount as u64,
-                                }),
-                                active: ScVal::Bool(true),
-                            };
+                            let seller = env.to_scval(owner);
+                            let selling = env.to_scval(sac.clone());
+                            let buying = env.to_scval(hash.clone());
+                            let amount = ScVal::I128(Int128Parts {
+                                hi: (amount >> 64) as i64,
+                                lo: *amount as u64,
+                            });
 
                             let existing = env
                                 .read_filter()
-                                .column_equal_to_xdr("seller", &offer.seller)
-                                .column_equal_to_xdr("selling", &offer.selling)
-                                .column_equal_to_xdr("buying", &offer.buying)
-                                .column_equal_to_xdr("amount", &offer.amount)
-                                .read::<ZephyrOffer>()
+                                .column_equal_to_xdr("seller", &seller)
+                                .column_equal_to_xdr("selling", &selling)
+                                .column_equal_to_xdr("buying", &buying)
+                                .column_equal_to_xdr("amount", &amount)
+                                .read::<ZephyrOfferEmpty>()
                                 .unwrap();
 
                             if existing.len() == 0 {
-                                env.put(&offer);
+                                env.put(&ZephyrOffer {
+                                    seller,
+                                    selling,
+                                    buying,
+                                    amount,
+                                    active: ScVal::Bool(true),
+                                });
                             } else {
                                 env.update()
-                                    .column_equal_to_xdr("seller", &offer.seller)
-                                    .column_equal_to_xdr("selling", &offer.selling)
-                                    .column_equal_to_xdr("buying", &offer.buying)
-                                    .column_equal_to_xdr("amount", &offer.amount)
-                                    .execute(&offer)
+                                    .column_equal_to_xdr("seller", &seller)
+                                    .column_equal_to_xdr("selling", &selling)
+                                    .column_equal_to_xdr("buying", &buying)
+                                    .column_equal_to_xdr("amount", &amount)
+                                    .execute(&ZephyrOfferActive {
+                                        active: ScVal::Bool(true),
+                                    })
                                     .unwrap();
                             }
                         }
@@ -506,23 +474,17 @@ fn process_ledger_entry_data(
                         if let Some(offers) = diff_offers {
                             if let Offers::Addresses(offers) = offers {
                                 for owner in offers.iter() {
-                                    let offer = ZephyrOffer {
-                                        seller: env.to_scval(owner),
-                                        selling: env.to_scval(sac.clone()),
-                                        buying: env.to_scval(hash.clone()),
-                                        amount: ScVal::I128(Int128Parts {
-                                            hi: (amount >> 64) as i64,
-                                            lo: *amount as u64,
-                                        }),
-                                        active: ScVal::Bool(false),
-                                    };
+                                    let amount = ScVal::I128(Int128Parts {
+                                        hi: (amount >> 64) as i64,
+                                        lo: *amount as u64,
+                                    });
 
                                     env.update()
-                                        .column_equal_to_xdr("seller", &offer.seller)
-                                        .column_equal_to_xdr("selling", &offer.selling)
-                                        .column_equal_to_xdr("buying", &offer.buying)
-                                        .column_equal_to_xdr("amount", &offer.amount)
-                                        .execute(&offer)
+                                        .column_equal_to_xdr("seller", &env.to_scval(owner))
+                                        .column_equal_to_xdr("selling", &env.to_scval(sac.clone()))
+                                        .column_equal_to_xdr("buying", &env.to_scval(hash.clone()))
+                                        .column_equal_to_xdr("amount", &amount)
+                                        .execute(&ZephyrOfferActive { active: ScVal::Bool(false) })
                                         .unwrap();
                                 }
                             }
@@ -534,12 +496,6 @@ fn process_ledger_entry_data(
         }
         _ => {}
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum Offers {
-    Offers(SorobanVec<Offer>),
-    Addresses(SorobanVec<Address>),
 }
 
 fn get_diff_offers(
@@ -618,17 +574,18 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
                         {
                             let offers = env
                                 .read_filter()
+                                .column_equal_to_xdr("seller", &owner)
                                 .column_equal_to_xdr("selling", &selling)
-                                .read::<ZephyrOffer>()
+                                .read::<ZephyrOfferEmpty>()
                                 .unwrap();
 
-                            for mut offer in offers {
-                                offer.seller = owner.clone();
-                                offer.active = ScVal::Bool(false);
-
+                            for _ in offers {
                                 env.update()
+                                    .column_equal_to_xdr("seller", &owner)
                                     .column_equal_to_xdr("selling", &selling)
-                                    .execute(&offer)
+                                    .execute(&ZephyrOfferActive {
+                                        active: ScVal::Bool(false),
+                                    })
                                     .unwrap();
                             }
                         }
@@ -647,17 +604,17 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
                         .column_equal_to_xdr("selling", &selling)
                         .column_equal_to_xdr("buying", &buying)
                         .column_equal_to_xdr("amount", &amount)
-                        .read::<ZephyrOffer>()
+                        .read::<ZephyrOfferEmpty>()
                         .unwrap();
 
-                    for mut offer in offers {
-                        offer.active = ScVal::Bool(false);
-
+                    for _ in offers {
                         env.update()
                             .column_equal_to_xdr("selling", &selling)
                             .column_equal_to_xdr("buying", &buying)
                             .column_equal_to_xdr("amount", &amount)
-                            .execute(&offer)
+                            .execute(&ZephyrOfferActive {
+                                active: ScVal::Bool(false),
+                            })
                             .unwrap();
                     }
                 }
@@ -670,11 +627,8 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
 fn address_string_to_scval(env: &EnvClient, address: &String) -> ScVal {
     let mut public_key = [0u8; 32];
 
-    let public_key_bytes = address.to_string();
-    let public_key_bytes = Address::from_string_bytes(&Bytes::from_slice(
-        &env.soroban(),
-        public_key_bytes.as_bytes(),
-    ));
+    let public_key_bytes =
+        Address::from_string_bytes(&Bytes::from_slice(&env.soroban(), address.as_bytes()));
     let public_key_bytes = public_key_bytes.to_xdr(env.soroban());
 
     public_key_bytes
@@ -722,13 +676,6 @@ pub extern "C" fn backfill() {
 pub struct GetColorsRequest {
     owner: String,
 }
-#[derive(Serialize, Deserialize)]
-pub struct GetColorsResponse {
-    miner: String,
-    owner: String,
-    color: u32,
-    amount: u32,
-}
 
 #[no_mangle]
 pub extern "C" fn get_colors() {
@@ -741,16 +688,6 @@ pub extern "C" fn get_colors() {
         .column_equal_to_xdr("owner", &owner)
         .read::<ZephyrColor>()
         .unwrap();
-    // This actually takes the request from ~ 1 sec to ~ 12 seconds
-    // .into_iter()
-    // .map(|color| {
-    //     GetColorsResponse {
-    //         miner: soroban_string_to_alloc_string(&env, env.from_scval::<Address>(&color.miner).to_string()),
-    //         owner: soroban_string_to_alloc_string(&env, env.from_scval::<Address>(&color.owner).to_string()),
-    //         color: color.color,
-    //         amount: color.amount
-    //     }
-    // }).collect::<Vec<GetColorsResponse>>();
 
     env.conclude(colors);
 }
@@ -771,18 +708,37 @@ pub extern "C" fn get_glyphs() {
             let glyphs = env
                 .read_filter()
                 .column_equal_to_xdr("owner", &owner)
-                .read::<ZephyrGlyph>()
+                .read::<ZephyrGlyphNoColors>()
                 .unwrap();
 
             env.conclude(&glyphs);
         }
         None => {
-            let glyphs = env
-                .read::<ZephyrGlyph>();
+            let glyphs = env.read::<ZephyrGlyphNoColors>();
 
             env.conclude(&glyphs);
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetGlyphRequest {
+    hash: String,
+}
+
+#[no_mangle]
+pub extern "C" fn get_glyph() {
+    let env = EnvClient::empty();
+    let request: GetGlyphRequest = env.read_request_body();
+    let hash = ScVal::Bytes(ScBytes(BytesM::from_str(request.hash.as_str()).unwrap()));
+
+    let glyphs = env
+        .read_filter()
+        .column_equal_to_xdr("hash", &hash)
+        .read::<ZephyrGlyph>()
+        .unwrap();
+
+    env.conclude(&glyphs);
 }
 
 #[derive(Serialize, Deserialize)]
@@ -800,8 +756,17 @@ pub extern "C" fn get_offers() {
         .read_filter()
         .column_equal_to_xdr("seller", &seller)
         .column_equal_to_xdr("active", &ScVal::Bool(true))
-        .read::<ZephyrOffer>()
+        .read::<ZephyrOfferNoActive>()
         .unwrap();
+
+    env.conclude(&offers);
+}
+
+#[no_mangle]
+pub extern "C" fn debug_offers() {
+    let env = EnvClient::empty();
+
+    let offers = env.read::<ZephyrOffer>();
 
     env.conclude(&offers);
 }
