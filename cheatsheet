@@ -1,0 +1,9 @@
+# Mercury commands
+# https://test.mercurydata.app/
+
+export JWT=???
+mercury-cli --jwt $JWT --local false --mainnet false deploy
+mercury-cli --jwt $JWT --local false --mainnet false catchup --contracts "CARZSHD6BLSLB5ENFR76QI4VNJ2XUHXEDCRG77VMLOAICRG7MZTIZPA7" # don't forget to subscribe to the contract first
+curl -X GET https://api.mercurydata.app/catchups/4
+curl -X POST https://api.mercurydata.app/zephyr/pubfunctions -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" -d '"project_name": "zephyr-colorglyph-ingestion",{"public":["get_glyphs"]}'
+curl -X POST -H "Authorization: Bearer $JWT" https://api.mercurydata.app/v2/key
