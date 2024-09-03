@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "colorglyph"
 version = "0.0.1"
-source = "git+https://github.com/Colorglyph/colorglyph-soroban#3a2b7b01086b3551bee5570dbb0be49f05eb1283"
+source = "git+https://github.com/Colorglyph/colorglyph-soroban#f97d9fdc6ac502fe08f7507da3995bb7cdf8fb65"
 dependencies = [
  "soroban-fixed-point-math",
  "soroban-sdk",
@@ -631,7 +631,7 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 name = "log"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
+checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "memchr"
@@ -712,7 +712,7 @@ dependencies = [
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de3145af08024dea9fa9914f381a17b8fc6034dfb00f3a84013f7ff43f29ed4c"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pest"
@@ -1448,7 +1448,7 @@ version = "0.116.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a58e28b80dd8340cb07b8242ae654756161f6fc8d0038123d679b7b99964fa50"
 dependencies = [
- "indexmap 2.2.6",
+ "indexmap 2.5.0",
  "semver",
 ]
 

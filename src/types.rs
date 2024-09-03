@@ -1,109 +1,77 @@
 use colorglyph::types::Offer;
 use serde::{Deserialize, Serialize};
-use zephyr_sdk::{
-    prelude::*,
-    soroban_sdk::{xdr::ScVal, Address, Vec as SorobanVec},
-    DatabaseDerive, EnvClient,
-};
+use zephyr_sdk::soroban_sdk::{xdr::ScVal, Address, Vec as SorobanVec};
 
 // --- COLORS ---
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("colors")]
-pub struct ZephyrColor {
-    pub miner: ScVal,
-    pub owner: ScVal,
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareColor {
+    pub kind: Kind,
+    pub change: Change,
+    pub miner: String,
+    pub owner: String,
     pub color: u32,
     pub amount: u32,
 }
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("colors")]
-pub struct ZephyrColorAmount {
-    pub amount: u32,
-}
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("colors")]
-pub struct ZephyrColorEmpty {}
-
 // --- GLYPHS ---
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyph {
-    pub hash: ScVal,
-    pub owner: ScVal,
-    pub minter: ScVal,
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareGlyph {
+    pub kind: Kind,
+    pub change: Change,
+    pub hash: String,
+    pub owner: String,
+    pub minter: String,
     pub width: u32,
     pub length: u32,
     pub colors: ScVal,
 }
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyphNoColors {
-    hash: ScVal,
-    owner: ScVal,
-    minter: ScVal,
-    width: u32,
-    length: u32,
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareGlyphOwner {
+    pub kind: Kind,
+    pub change: Change,
+    pub hash: String,
+    pub owner: String,
 }
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyphWidthLengthColors {
-    pub width: u32,
-    pub length: u32,
-    pub colors: ScVal,
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareGlyphMinter {
+    pub kind: Kind,
+    pub change: Change,
+    pub hash: String,
+    pub minter: String,
 }
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyphOwner {
-    pub owner: ScVal,
-}
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyphMinter {
-    pub minter: ScVal,
-}
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("glyphs")]
-pub struct ZephyrGlyphEmpty {}
 
 // --- OFFERS ---
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("offers")]
-pub struct ZephyrOffer {
-    pub seller: ScVal,
-    pub selling: ScVal,
-    pub buying: ScVal,
-    pub amount: ScVal, // because currently i128 is broken
-    pub active: ScVal,
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareOffer {
+    pub kind: Kind,
+    pub change: Change,
+    pub seller: String,
+    pub selling: String,
+    pub buying: String,
+    pub amount: Option<ScVal>, // because currently i128 is broken
 }
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("offers")]
-pub struct ZephyrOfferNoActive {
-    seller: ScVal,
-    selling: ScVal,
-    buying: ScVal,
-    amount: ScVal, // because currently i128 is broken
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareOfferSellerSelling {
+    pub kind: Kind,
+    pub change: Change,
+    pub seller: String,
+    pub selling: String,
 }
 
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("offers")]
-pub struct ZephyrOfferActive {
-    pub active: ScVal,
+#[derive(Serialize, Deserialize)]
+pub struct CloudflareOfferSellingBuyingAmount {
+    pub kind: Kind,
+    pub change: Change,
+    pub selling: String,
+    pub buying: String,
+    pub amount: Option<ScVal>, // because currently i128 is broken
 }
-
-#[derive(DatabaseDerive, Clone, Serialize, Debug)]
-#[with_name("offers")]
-pub struct ZephyrOfferEmpty {}
 
 // --- OTHER ---
 

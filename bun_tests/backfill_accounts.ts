@@ -23,7 +23,7 @@ for (const { hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr } of t
 
         if (
             fn 
-            && fn.includes('colors')
+            && fn.includes('glyph_mint')
         ) await backfill(hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr)
     }
 }

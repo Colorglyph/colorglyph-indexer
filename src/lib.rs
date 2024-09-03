@@ -1,25 +1,28 @@
-use core::str::FromStr;
-
 use colorglyph::types::{Glyph, Offer, StorageKey};
 use serde::{Deserialize, Serialize};
 use types::{
-    Change, Offers, Kind, ZephyrColor, ZephyrColorAmount, ZephyrColorEmpty, ZephyrGlyph, ZephyrGlyphEmpty, ZephyrGlyphMinter, ZephyrGlyphNoColors, ZephyrGlyphOwner, ZephyrGlyphWidthLengthColors, ZephyrOffer, ZephyrOfferActive, ZephyrOfferEmpty, ZephyrOfferNoActive
+    Change, CloudflareColor, CloudflareGlyph, CloudflareGlyphMinter, CloudflareGlyphOwner,
+    CloudflareOffer, CloudflareOfferSellerSelling, CloudflareOfferSellingBuyingAmount, Kind,
+    Offers,
 };
 use zephyr_sdk::{
-    prelude::*, soroban_sdk::{
+    prelude::*,
+    soroban_sdk::{
         xdr::{
-            AccountId, BytesM, ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
+            ContractDataEntry as SorobanContractDataEntry, FeeBumpTransaction,
             FeeBumpTransactionEnvelope, FeeBumpTransactionInnerTx, Hash, HostFunction,
             InnerTransactionResult, InnerTransactionResultPair, InnerTransactionResultResult,
             Int128Parts, InvokeContractArgs, InvokeHostFunctionOp, InvokeHostFunctionResult,
             LedgerEntry, LedgerEntryChange, LedgerEntryChanges, LedgerEntryData, LedgerKey,
             LedgerKeyContractData, Operation, OperationBody, OperationMeta, OperationResult,
-            OperationResultTr, PublicKey, ScAddress, ScBytes, ScVal, ToXdr, TransactionEnvelope,
-            TransactionMeta, TransactionMetaV3, TransactionResult, TransactionResultMeta,
-            TransactionResultPair, TransactionResultResult, TransactionV1Envelope, Uint256, VecM,
+            OperationResultTr, ScAddress, ScVal, TransactionEnvelope, TransactionMeta,
+            TransactionMetaV3, TransactionResult, TransactionResultMeta, TransactionResultPair,
+            TransactionResultResult, TransactionV1Envelope, VecM,
         },
-        Address, Bytes, Vec as SorobanVec,
-    }, utils::soroban_string_to_alloc_string, AgnosticRequest, ContractDataEntry, EnvClient, Method
+        Address, BytesN, Vec as SorobanVec,
+    },
+    utils::address_to_alloc_string,
+    AgnosticRequest, ContractDataEntry, EnvClient, Method,
 };
 
 mod types;
@@ -196,265 +199,202 @@ fn process_invoke_host_function_op(
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct CloudflareColor {
-    kind: Kind,
-    change: Change,
-    miner: String,
-    owner: String,
-    color: u32,
-    amount: u32
-}
-
 fn process_ledger_entry_data(
     env: &EnvClient,
     data: &LedgerEntryData,
     changes: Option<&LedgerEntryChanges>,
-    change: Change
+    change: Change,
 ) {
     match data {
         LedgerEntryData::ContractData(SorobanContractDataEntry { key, val, .. }) => {
             if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
                 match &key {
                     StorageKey::Color(miner, owner, color) => {
-                        // let miner = env.to_scval(miner);
-                        // let owner = env.to_scval(owner);
-                        // let amount: u32 = env.from_scval(val);
-                        // let existing = &env
-                        //     .read_filter()
-                        //     .column_equal_to_xdr("miner", &miner)
-                        //     .column_equal_to_xdr("owner", &owner)
-                        //     .column_equal_to("color", *color)
-                        //     .read::<ZephyrColorEmpty>()
-                        //     .unwrap();
+                        let data = CloudflareColor {
+                            kind: Kind::Color,
+                            change,
+                            miner: address_to_alloc_string(env, miner.clone()),
+                            owner: address_to_alloc_string(env, owner.clone()),
+                            color: *color,
+                            amount: env.from_scval(val),
+                        };
 
-                        // if existing.len() == 0 {
-                            // let color = ZephyrColor {
-                            //     miner,
-                            //     owner,
-                            //     color: *color,
-                            //     amount,
-                            // };
+                        let body = serde_json::to_string(&data).unwrap();
 
-                            // env.put(&color);
-
-                            // let body = format!(
-                            //     r#"{{"type": "color", "change": "{:?}", "miner": "{:?}", "owner": "{:?}", "color": "{:?}", "amount": {}}}"#,
-                            //     kind,
-                            //     miner.to_string(),
-                            //     owner.to_string(),
-                            //     color,
-                            //     amount
-                            // );
-
-                            let data = CloudflareColor {
-                                kind: Kind::Color,
-                                change,
-                                miner: soroban_string_to_alloc_string(env, miner.to_string()),
-                                owner: soroban_string_to_alloc_string(env, owner.to_string()),
-                                color: *color,
-                                amount: env.from_scval(val)
-                            };
-
-                            let body = serde_json::to_string(&data).unwrap();
-
-                            // let p: CloudflareColor = serde_json::from_str(data)?;
-
-                            env.send_web_request(AgnosticRequest {
-                                body: Some(body),
-                                url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
-                                method: Method::Post,
-                                headers: vec![
-                                    ("Content-Type".into(), "application/json".into()),
-                                ]
-                            })
-                        // } else {
-                        //     env.update()
-                        //         .column_equal_to_xdr("miner", &miner)
-                        //         .column_equal_to_xdr("owner", &owner)
-                        //         .column_equal_to("color", *color)
-                        //         .execute(&ZephyrColorAmount { amount })
-                        //         .unwrap();
-                        // }
+                        env.send_web_request(AgnosticRequest {
+                            body: Some(body),
+                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                .into(),
+                            method: Method::Post,
+                            headers: vec![("Content-Type".into(), "application/json".into())],
+                        })
                     }
                     StorageKey::Glyph(hash) => {
-                        let hash = env.to_scval(hash.clone());
                         let glyph: Glyph = env.from_scval(val);
                         let colors = env.to_scval(glyph.colors);
 
-                        let existing = &env
-                            .read_filter()
-                            .column_equal_to_xdr("hash", &hash)
-                            .read::<ZephyrGlyphEmpty>()
-                            .unwrap();
+                        let data = CloudflareGlyph {
+                            kind: Kind::Glyph,
+                            change,
+                            hash: hex::encode(hash.to_array()),
+                            owner: String::new(), // if let Some(owner) = get_glyph_owner(env, hash) { owner } else { String::new() },
+                            minter: String::new(),
+                            width: glyph.width,
+                            length: glyph.length,
+                            colors,
+                        };
 
-                        if existing.len() == 0 {
-                            env.put(&ZephyrGlyph {
-                                hash,
-                                owner: ScVal::Void,
-                                minter: ScVal::Void,
-                                width: glyph.width,
-                                length: glyph.length,
-                                colors,
-                            });
-                        } else {
-                            let glyph = ZephyrGlyphWidthLengthColors {
-                                width: glyph.width,
-                                length: glyph.length,
-                                colors,
-                            };
+                        let body = serde_json::to_string(&data).unwrap();
 
-                            env.update()
-                                .column_equal_to_xdr("hash", &hash)
-                                .execute(&glyph)
-                                .unwrap();
-                        }
+                        env.send_web_request(AgnosticRequest {
+                            body: Some(body),
+                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                .into(),
+                            method: Method::Post,
+                            headers: vec![("Content-Type".into(), "application/json".into())],
+                        })
                     }
                     StorageKey::GlyphOwner(hash) => {
-                        let hash = env.to_scval(hash.clone());
-                        let existing = &env
-                            .read_filter()
-                            .column_equal_to_xdr("hash", &hash)
-                            .read::<ZephyrGlyphEmpty>()
-                            .unwrap();
+                        let data = CloudflareGlyphOwner {
+                            kind: Kind::Glyph,
+                            change,
+                            hash: hex::encode(hash.to_array()),
+                            owner: address_to_alloc_string(env, env.from_scval::<Address>(val)),
+                        };
 
-                        if existing.len() > 0 {
-                            env.update()
-                                .column_equal_to_xdr("hash", &hash)
-                                .execute(&ZephyrGlyphOwner { owner: val.clone() })
-                                .unwrap();
-                        }
+                        let body = serde_json::to_string(&data).unwrap();
+
+                        env.send_web_request(AgnosticRequest {
+                            body: Some(body),
+                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                .into(),
+                            method: Method::Post,
+                            headers: vec![("Content-Type".into(), "application/json".into())],
+                        })
                     }
                     StorageKey::GlyphMinter(hash) => {
-                        let hash = env.to_scval(hash.clone());
-                        let existing = &env
-                            .read_filter()
-                            .column_equal_to_xdr("hash", &hash)
-                            .read::<ZephyrGlyphEmpty>()
-                            .unwrap();
+                        let data = CloudflareGlyphMinter {
+                            kind: Kind::Glyph,
+                            change,
+                            hash: hex::encode(hash.to_array()),
+                            minter: address_to_alloc_string(env, env.from_scval::<Address>(val)),
+                        };
 
-                        if existing.len() > 0 {
-                            env.update()
-                                .column_equal_to_xdr("hash", &hash)
-                                .execute(&ZephyrGlyphMinter {
-                                    minter: val.clone(),
-                                })
-                                .unwrap();
-                        }
+                        let body = serde_json::to_string(&data).unwrap();
+
+                        env.send_web_request(AgnosticRequest {
+                            body: Some(body),
+                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                .into(),
+                            method: Method::Post,
+                            headers: vec![("Content-Type".into(), "application/json".into())],
+                        })
                     }
                     StorageKey::GlyphOffer(hash) => {
                         let offers: SorobanVec<Offer> = env.from_scval(val);
                         let diff_offers =
                             get_diff_offers(&env, &key, changes, &Offers::Offers(offers.clone()));
-                        let owner = &env.read_contract_entry_by_scvalkey(
-                            CONTRACT_ADDRESS,
-                            env.to_scval(StorageKey::GlyphOwner(hash.clone())),
-                        );
+                        if let Some(owner) = get_glyph_owner(env, hash) {
+                            // Add or update
+                            for offer in offers.iter() {
+                                let buying: String;
+                                let amount: Option<ScVal>;
 
-                        if owner.is_ok() && owner.clone().unwrap().is_some() {
-                            let ContractDataEntry { entry, .. } = owner.clone().unwrap().unwrap();
-                            let LedgerEntry { data, .. } = entry;
-
-                            if let LedgerEntryData::ContractData(SorobanContractDataEntry {
-                                val: owner,
-                                ..
-                            }) = data
-                            {
-                                // Add or update
-                                for offer in offers.iter() {
-                                    let seller: ScVal = owner.clone();
-                                    let selling: ScVal = env.to_scval(hash.clone());
-                                    let buying: ScVal;
-                                    let amount: ScVal;
-
-                                    match offer {
-                                        // Selling a glyph for a glyph
-                                        Offer::Glyph(buying_hash) => {
-                                            buying = env.to_scval(buying_hash);
-                                            amount = ScVal::Void;
-                                        }
-                                        // Selling a glyph for an asset
-                                        Offer::Asset(sac, a) => {
-                                            buying = env.to_scval(sac);
-                                            amount = ScVal::I128(
-                                                // The amount of the buying asset the seller wants
-                                                Int128Parts {
-                                                    hi: (a >> 64) as i64,
-                                                    lo: a as u64,
-                                                },
-                                            );
-                                        }
-                                        _ => {
-                                            panic!("Invalid offer type")
-                                        }
+                                match offer {
+                                    // Selling a glyph for a glyph
+                                    Offer::Glyph(buying_hash) => {
+                                        buying = hex::encode(buying_hash.to_array()); // env.to_scval(buying_hash);
+                                        amount = None;
                                     }
-
-                                    // update if exists, otherwise put
-                                    let existing = env
-                                        .read_filter()
-                                        .column_equal_to_xdr("seller", &seller)
-                                        .column_equal_to_xdr("selling", &selling)
-                                        .column_equal_to_xdr("buying", &buying)
-                                        .column_equal_to_xdr("amount", &amount)
-                                        .read::<ZephyrOfferEmpty>()
-                                        .unwrap();
-
-                                    if existing.len() == 0 {
-                                        env.put(&ZephyrOffer {
-                                            seller,
-                                            selling,
-                                            buying,
-                                            amount,
-                                            active: ScVal::Bool(true),
-                                        });
-                                    } else {
-                                        env.update()
-                                            .column_equal_to_xdr("seller", &seller)
-                                            .column_equal_to_xdr("selling", &selling)
-                                            .column_equal_to_xdr("buying", &buying)
-                                            .column_equal_to_xdr("amount", &amount)
-                                            .execute(&ZephyrOfferActive {
-                                                active: ScVal::Bool(true),
-                                            })
-                                            .unwrap();
+                                    // Selling a glyph for an asset
+                                    Offer::Asset(sac, a) => {
+                                        buying = address_to_alloc_string(env, sac);
+                                        amount = Some(ScVal::I128(Int128Parts {
+                                            hi: (a >> 64) as i64,
+                                            lo: a as u64,
+                                        }));
+                                    }
+                                    _ => {
+                                        panic!("Invalid offer type")
                                     }
                                 }
 
-                                // Remove if exists
-                                if let Some(offers) = diff_offers {
-                                    if let Offers::Offers(offers) = offers {
-                                        for offer in offers.iter() {
-                                            let buying: ScVal;
-                                            let amount: ScVal;
+                                let data = CloudflareOffer {
+                                    kind: Kind::Offer,
+                                    change: change.clone(),
+                                    seller: address_to_alloc_string(
+                                        env,
+                                        env.from_scval::<Address>(&owner),
+                                    ),
+                                    selling: hex::encode(hash.to_array()),
+                                    buying,
+                                    amount,
+                                };
 
-                                            match offer {
-                                                Offer::Glyph(buying_hash) => {
-                                                    buying = env.to_scval(buying_hash);
-                                                    amount = ScVal::Void;
-                                                }
-                                                Offer::Asset(sac, a) => {
-                                                    buying = env.to_scval(sac); // The asset the seller wants
-                                                    amount = ScVal::I128(
-                                                        // The amount of the buying asset the seller wants
-                                                        Int128Parts {
-                                                            hi: (a >> 64) as i64,
-                                                            lo: a as u64,
-                                                        },
-                                                    );
-                                                }
-                                                _ => {
-                                                    panic!("Invalid offer type")
-                                                }
+                                let body = serde_json::to_string(&data).unwrap();
+
+                                env.send_web_request(AgnosticRequest {
+                                    body: Some(body),
+                                    url:
+                                        "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                            .into(),
+                                    method: Method::Post,
+                                    headers: vec![(
+                                        "Content-Type".into(),
+                                        "application/json".into(),
+                                    )],
+                                })
+                            }
+
+                            // Remove if exists
+                            if let Some(offers) = diff_offers {
+                                if let Offers::Offers(offers) = offers {
+                                    for offer in offers.iter() {
+                                        let buying: String;
+                                        let amount: Option<ScVal>;
+
+                                        match offer {
+                                            Offer::Glyph(buying_hash) => {
+                                                buying = hex::encode(buying_hash.to_array());
+                                                amount = None;
                                             }
-
-                                            env.update()
-                                                .column_equal_to_xdr("seller", &owner.clone())
-                                                .column_equal_to_xdr("selling", &env.to_scval(hash.clone()))
-                                                .column_equal_to_xdr("buying", &buying)
-                                                .column_equal_to_xdr("amount", &amount)
-                                                .execute(&ZephyrOfferActive { active: ScVal::Bool(false) })
-                                                .unwrap();
+                                            Offer::Asset(sac, a) => {
+                                                buying = address_to_alloc_string(env, sac); // The asset the seller wants
+                                                amount = Some(ScVal::I128(
+                                                    // The amount of the buying asset the seller wants
+                                                    Int128Parts {
+                                                        hi: (a >> 64) as i64,
+                                                        lo: a as u64,
+                                                    },
+                                                ));
+                                            }
+                                            _ => {
+                                                panic!("Invalid offer type")
+                                            }
                                         }
+
+                                        let data = CloudflareOffer {
+                                            kind: Kind::Offer,
+                                            change: Change::Remove,
+                                            seller: address_to_alloc_string(
+                                                env,
+                                                env.from_scval::<Address>(&owner),
+                                            ),
+                                            selling: hex::encode(hash.to_array()),
+                                            buying,
+                                            amount,
+                                        };
+
+                                        let body = serde_json::to_string(&data).unwrap();
+
+                                        env.send_web_request(AgnosticRequest {
+                                            body: Some(body),
+                                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
+                                            method: Method::Post,
+                                            headers: vec![
+                                                ("Content-Type".into(), "application/json".into()),
+                                            ]
+                                        })
                                     }
                                 }
                             }
@@ -472,60 +412,55 @@ fn process_ledger_entry_data(
 
                         // Add or update
                         for owner in offers.iter() {
-                            let seller = env.to_scval(owner);
-                            let selling = env.to_scval(sac.clone());
-                            let buying = env.to_scval(hash.clone());
-                            let amount = ScVal::I128(Int128Parts {
-                                hi: (amount >> 64) as i64,
-                                lo: *amount as u64,
-                            });
+                            let data = CloudflareOffer {
+                                kind: Kind::Offer,
+                                change: change.clone(),
+                                seller: address_to_alloc_string(env, owner),
+                                selling: address_to_alloc_string(env, sac.clone()),
+                                buying: hex::encode(hash.to_array()),
+                                amount: Some(ScVal::I128(Int128Parts {
+                                    hi: (amount >> 64) as i64,
+                                    lo: *amount as u64,
+                                })),
+                            };
 
-                            let existing = env
-                                .read_filter()
-                                .column_equal_to_xdr("seller", &seller)
-                                .column_equal_to_xdr("selling", &selling)
-                                .column_equal_to_xdr("buying", &buying)
-                                .column_equal_to_xdr("amount", &amount)
-                                .read::<ZephyrOfferEmpty>()
-                                .unwrap();
+                            let body = serde_json::to_string(&data).unwrap();
 
-                            if existing.len() == 0 {
-                                env.put(&ZephyrOffer {
-                                    seller,
-                                    selling,
-                                    buying,
-                                    amount,
-                                    active: ScVal::Bool(true),
-                                });
-                            } else {
-                                env.update()
-                                    .column_equal_to_xdr("seller", &seller)
-                                    .column_equal_to_xdr("selling", &selling)
-                                    .column_equal_to_xdr("buying", &buying)
-                                    .column_equal_to_xdr("amount", &amount)
-                                    .execute(&ZephyrOfferActive {
-                                        active: ScVal::Bool(true),
-                                    })
-                                    .unwrap();
-                            }
+                            env.send_web_request(AgnosticRequest {
+                                body: Some(body),
+                                url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                    .into(),
+                                method: Method::Post,
+                                headers: vec![("Content-Type".into(), "application/json".into())],
+                            })
                         }
 
                         // Remove if exists
                         if let Some(offers) = diff_offers {
                             if let Offers::Addresses(offers) = offers {
                                 for owner in offers.iter() {
-                                    let amount = ScVal::I128(Int128Parts {
-                                        hi: (amount >> 64) as i64,
-                                        lo: *amount as u64,
-                                    });
+                                    let data = CloudflareOffer {
+                                        kind: Kind::Offer,
+                                        change: Change::Remove,
+                                        seller: address_to_alloc_string(env, owner),
+                                        selling: address_to_alloc_string(env, sac.clone()),
+                                        buying: hex::encode(hash.to_array()),
+                                        amount: Some(ScVal::I128(Int128Parts {
+                                            hi: (amount >> 64) as i64,
+                                            lo: *amount as u64,
+                                        })),
+                                    };
 
-                                    env.update()
-                                        .column_equal_to_xdr("seller", &env.to_scval(owner))
-                                        .column_equal_to_xdr("selling", &env.to_scval(sac.clone()))
-                                        .column_equal_to_xdr("buying", &env.to_scval(hash.clone()))
-                                        .column_equal_to_xdr("amount", &amount)
-                                        .execute(&ZephyrOfferActive { active: ScVal::Bool(false) })
-                                        .unwrap();
+                                    let body = serde_json::to_string(&data).unwrap();
+
+                                    env.send_web_request(AgnosticRequest {
+                                        body: Some(body),
+                                        url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
+                                        method: Method::Post,
+                                        headers: vec![
+                                            ("Content-Type".into(), "application/json".into()),
+                                        ]
+                                    })
                                 }
                             }
                         }
@@ -535,6 +470,61 @@ fn process_ledger_entry_data(
             }
         }
         _ => {}
+    }
+}
+
+fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
+    if let LedgerKey::ContractData(LedgerKeyContractData { key, .. }) = key {
+        if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
+            match key {
+                // StorageKey::Color(miner, owner, color) => {}
+                // StorageKey::Glyph(hash) => {}
+                // StorageKey::GlyphOwner(hash),
+                // StorageKey::GlyphMinter(hash),
+                StorageKey::GlyphOffer(hash) => {
+                    if let Some(owner) = get_glyph_owner(env, &hash) {
+                        let data = CloudflareOfferSellerSelling {
+                            kind: Kind::Offer,
+                            change: Change::Remove,
+                            seller: address_to_alloc_string(env, env.from_scval::<Address>(&owner)),
+                            selling: hex::encode(hash.to_array()),
+                        };
+
+                        let body = serde_json::to_string(&data).unwrap();
+
+                        env.send_web_request(AgnosticRequest {
+                            body: Some(body),
+                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
+                                .into(),
+                            method: Method::Post,
+                            headers: vec![("Content-Type".into(), "application/json".into())],
+                        })
+                    }
+                }
+                StorageKey::AssetOffer(hash, sac, amount) => {
+                    let data = CloudflareOfferSellingBuyingAmount {
+                        kind: Kind::Offer,
+                        change: Change::Remove,
+                        selling: hex::encode(hash.to_array()),
+                        buying: address_to_alloc_string(env, sac),
+                        amount: Some(ScVal::I128(Int128Parts {
+                            hi: (amount >> 64) as i64,
+                            lo: amount as u64,
+                        })),
+                    };
+
+                    let body = serde_json::to_string(&data).unwrap();
+
+                    env.send_web_request(AgnosticRequest {
+                        body: Some(body),
+                        url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
+                        method: Method::Post,
+                        headers: vec![("Content-Type".into(), "application/json".into())],
+                    })
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -588,96 +578,22 @@ fn get_diff_offers(
     None
 }
 
-fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
-    if let LedgerKey::ContractData(LedgerKeyContractData { key, .. }) = key {
-        if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
-            match key {
-                // StorageKey::Color(miner, owner, color) => {}
-                // StorageKey::Glyph(hash) => {}
-                // StorageKey::GlyphOwner(hash),
-                // StorageKey::GlyphMinter(hash),
-                StorageKey::GlyphOffer(hash) => {
-                    let selling = env.to_scval(hash.clone());
-                    let owner = &env.read_contract_entry_by_scvalkey(
-                        CONTRACT_ADDRESS,
-                        env.to_scval(StorageKey::GlyphOwner(hash.clone())),
-                    );
+fn get_glyph_owner(env: &EnvClient, hash: &BytesN<32>) -> Option<ScVal> {
+    let owner = &env.read_contract_entry_by_scvalkey(
+        CONTRACT_ADDRESS,
+        env.to_scval(StorageKey::GlyphOwner(hash.clone())),
+    );
 
-                    if owner.is_ok() && owner.clone().unwrap().is_some() {
-                        let ContractDataEntry { entry, .. } = owner.clone().unwrap().unwrap();
-                        let LedgerEntry { data, .. } = entry;
+    if owner.is_ok() && owner.clone().unwrap().is_some() {
+        let ContractDataEntry { entry, .. } = owner.clone().unwrap().unwrap();
+        let LedgerEntry { data, .. } = entry;
 
-                        if let LedgerEntryData::ContractData(SorobanContractDataEntry {
-                            val: owner,
-                            ..
-                        }) = data
-                        {
-                            let offers = env
-                                .read_filter()
-                                .column_equal_to_xdr("seller", &owner)
-                                .column_equal_to_xdr("selling", &selling)
-                                .read::<ZephyrOfferEmpty>()
-                                .unwrap();
-
-                            for _ in offers {
-                                env.update()
-                                    .column_equal_to_xdr("seller", &owner)
-                                    .column_equal_to_xdr("selling", &selling)
-                                    .execute(&ZephyrOfferActive {
-                                        active: ScVal::Bool(false),
-                                    })
-                                    .unwrap();
-                            }
-                        }
-                    }
-                }
-                StorageKey::AssetOffer(hash, sac, amount) => {
-                    let selling = env.to_scval(hash.clone());
-                    let buying = env.to_scval(sac.clone());
-                    let amount = ScVal::I128(Int128Parts {
-                        hi: (amount >> 64) as i64,
-                        lo: amount as u64,
-                    });
-
-                    let offers = env
-                        .read_filter()
-                        .column_equal_to_xdr("selling", &selling)
-                        .column_equal_to_xdr("buying", &buying)
-                        .column_equal_to_xdr("amount", &amount)
-                        .read::<ZephyrOfferEmpty>()
-                        .unwrap();
-
-                    for _ in offers {
-                        env.update()
-                            .column_equal_to_xdr("selling", &selling)
-                            .column_equal_to_xdr("buying", &buying)
-                            .column_equal_to_xdr("amount", &amount)
-                            .execute(&ZephyrOfferActive {
-                                active: ScVal::Bool(false),
-                            })
-                            .unwrap();
-                    }
-                }
-                _ => {}
-            }
+        if let LedgerEntryData::ContractData(SorobanContractDataEntry { val, .. }) = data {
+            return Some(val);
         }
     }
-}
 
-fn address_string_to_scval(env: &EnvClient, address: &String) -> ScVal {
-    let mut public_key = [0u8; 32];
-
-    let public_key_bytes =
-        Address::from_string_bytes(&Bytes::from_slice(&env.soroban(), address.as_bytes()));
-    let public_key_bytes = public_key_bytes.to_xdr(env.soroban());
-
-    public_key_bytes
-        .slice(public_key_bytes.len() - 32..)
-        .copy_into_slice(&mut public_key);
-
-    ScVal::Address(ScAddress::Account(AccountId(
-        PublicKey::PublicKeyTypeEd25519(Uint256(public_key)),
-    )))
+    None
 }
 
 #[derive(Serialize, Deserialize)]
@@ -710,103 +626,4 @@ pub extern "C" fn backfill() {
     process_transaction(&env, &transaction_envelope, &transaction_result_meta);
 
     env.conclude("OK");
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GetColorsRequest {
-    owner: String,
-}
-
-#[no_mangle]
-pub extern "C" fn get_colors() {
-    let env = EnvClient::empty();
-    let request: GetColorsRequest = env.read_request_body();
-    let owner = address_string_to_scval(&env, &request.owner);
-
-    let colors = env
-        .read_filter()
-        .column_equal_to_xdr("owner", &owner)
-        .read::<ZephyrColor>()
-        .unwrap();
-
-    env.conclude(colors);
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GetGlyphsRequest {
-    owner: Option<String>,
-}
-
-#[no_mangle]
-pub extern "C" fn get_glyphs() {
-    let env = EnvClient::empty();
-    let request: GetGlyphsRequest = env.read_request_body();
-    
-    match request.owner {
-        Some(owner) => {
-            let owner = address_string_to_scval(&env, &owner);
-            let glyphs = env
-                .read_filter()
-                .column_equal_to_xdr("owner", &owner)
-                .read::<ZephyrGlyphNoColors>()
-                .unwrap();
-
-            env.conclude(&glyphs);
-        }
-        None => {
-            let glyphs = env.read::<ZephyrGlyphNoColors>();
-
-            env.conclude(&glyphs);
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GetGlyphRequest {
-    hash: String,
-}
-
-#[no_mangle]
-pub extern "C" fn get_glyph() {
-    let env = EnvClient::empty();
-    let request: GetGlyphRequest = env.read_request_body();
-    let hash = ScVal::Bytes(ScBytes(BytesM::from_str(request.hash.as_str()).unwrap()));
-
-    let glyphs = env
-        .read_filter()
-        .column_equal_to_xdr("hash", &hash)
-        .read::<ZephyrGlyph>()
-        .unwrap();
-
-    env.conclude(&glyphs);
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GetOffersRequest {
-    seller: String,
-}
-
-#[no_mangle]
-pub extern "C" fn get_offers() {
-    let env = EnvClient::empty();
-    let request: GetOffersRequest = env.read_request_body();
-    let seller = address_string_to_scval(&env, &request.seller);
-
-    let offers = env
-        .read_filter()
-        .column_equal_to_xdr("seller", &seller)
-        .column_equal_to_xdr("active", &ScVal::Bool(true))
-        .read::<ZephyrOfferNoActive>()
-        .unwrap();
-
-    env.conclude(&offers);
-}
-
-#[no_mangle]
-pub extern "C" fn debug_offers() {
-    let env = EnvClient::empty();
-
-    let offers = env.read::<ZephyrOffer>();
-
-    env.conclude(&offers);
 }
