@@ -21,7 +21,7 @@ pub struct DataGlyph {
     pub hash: String,
     pub width: u32,
     pub length: u32,
-    pub colors: String, // TODO maybe cheaper as a Vec<8>
+    pub colors: String, // String vs Vec since the array has all those commas
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,6 +80,7 @@ pub enum Data {
 #[derive(Serialize, Deserialize)]
 pub struct Body {
     pub seq_num: i64,
+    pub fee_charged: i64,
     pub data: Vec<Data>,
 }
 

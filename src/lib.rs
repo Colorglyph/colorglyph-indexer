@@ -40,25 +40,26 @@ pub const CONTRACT_ADDRESS: [u8; 32] = [
 #[no_mangle]
 pub extern "C" fn on_close() {
     let env = EnvClient::new();
-    let mut cf_seq_num: i64 = 0;
-    let mut cf_data: Vec<Data> = vec![];
+    // let mut cf_seq_num: i64 = 0;
+    // let mut cf_data: Vec<Data> = vec![];
+    let mut cf_body = Body {
+        seq_num: 0,
+        fee_charged: 0,
+        data: vec![],
+    };
 
     for (transaction_envelope, transaction_result_meta) in env.reader().envelopes_with_meta().iter()
     {
         process_transaction(
             &env,
-            &mut cf_seq_num,
-            &mut cf_data,
+            &mut cf_body,
             transaction_envelope,
             transaction_result_meta,
         );
     }
 
-    if !cf_data.is_empty() {
-        let body = serde_json::to_string(&Body {
-            seq_num: cf_seq_num,
-            data: cf_data,
-        })
+    if !cf_body.data.is_empty() {
+        let body = serde_json::to_string(&cf_body)
         .unwrap();
 
         env.send_web_request(AgnosticRequest {
@@ -72,8 +73,7 @@ pub extern "C" fn on_close() {
 
 fn process_transaction(
     env: &EnvClient,
-    cf_seq_num: &mut i64,
-    cf_data: &mut Vec<Data>,
+    cf_body: &mut Body,
     transaction_envelope: &TransactionEnvelope,
     transaction_result_meta: &TransactionResultMeta,
 ) {
@@ -83,7 +83,9 @@ fn process_transaction(
         ..
     } = transaction_result_meta;
     let TransactionResultPair { result, .. } = result;
-    let TransactionResult { result, .. } = result;
+    let TransactionResult { result, fee_charged, .. } = result;
+
+    cf_body.fee_charged = *fee_charged;
 
     match result {
         TransactionResultResult::TxFeeBumpInnerSuccess(tx) => {
@@ -93,8 +95,7 @@ fn process_transaction(
             match result {
                 InnerTransactionResultResult::TxSuccess(results) => process_operation_result(
                     &env,
-                    cf_seq_num,
-                    cf_data,
+                    cf_body,
                     results,
                     transaction_envelope,
                     tx_apply_processing,
@@ -104,8 +105,7 @@ fn process_transaction(
         }
         TransactionResultResult::TxSuccess(results) => process_operation_result(
             &env,
-            cf_seq_num,
-            cf_data,
+            cf_body,
             results,
             transaction_envelope,
             tx_apply_processing,
@@ -116,8 +116,7 @@ fn process_transaction(
 
 fn process_operation_result(
     env: &EnvClient,
-    cf_seq_num: &mut i64,
-    cf_data: &mut Vec<Data>,
+    cf_body: &mut Body,
     results: &VecM<OperationResult>,
     tx_envelope: &TransactionEnvelope,
     tx_apply_processing: &TransactionMeta,
@@ -137,13 +136,13 @@ fn process_operation_result(
                                     TransactionEnvelope::Tx(TransactionV1Envelope {
                                         tx, ..
                                     }) => {
-                                        *cf_seq_num = tx.seq_num.0;
+                                        cf_body.seq_num = tx.seq_num.0;
 
                                         for Operation { body, .. } in tx.operations.iter() {
                                             match body {
                                                 OperationBody::InvokeHostFunction(op) => {
                                                     process_invoke_host_function_op(
-                                                        env, cf_data, op, changes,
+                                                        env, cf_body, op, changes,
                                                     )
                                                 }
                                                 _ => {}
@@ -159,13 +158,13 @@ fn process_operation_result(
                                             FeeBumpTransactionInnerTx::Tx(
                                                 TransactionV1Envelope { tx, .. },
                                             ) => {
-                                                *cf_seq_num = tx.seq_num.0;
+                                                cf_body.seq_num = tx.seq_num.0;
 
                                                 for Operation { body, .. } in tx.operations.iter() {
                                                     match body {
                                                         OperationBody::InvokeHostFunction(op) => {
                                                             process_invoke_host_function_op(
-                                                                env, cf_data, op, changes,
+                                                                env, cf_body, op, changes,
                                                             )
                                                         }
                                                         _ => {}
@@ -191,7 +190,7 @@ fn process_operation_result(
 
 fn process_invoke_host_function_op(
     env: &EnvClient,
-    cf_data: &mut Vec<Data>,
+    cf_body: &mut Body,
     op: &InvokeHostFunctionOp,
     changes: &LedgerEntryChanges,
 ) {
@@ -222,18 +221,18 @@ fn process_invoke_host_function_op(
                 for change in changes.iter() {
                     match change {
                         LedgerEntryChange::Created(LedgerEntry { data, .. }) => {
-                            process_ledger_entry_data(env, cf_data, data, None, Change::Create)
+                            process_ledger_entry_data(env, cf_body, data, None, Change::Create)
                         }
                         LedgerEntryChange::Updated(LedgerEntry { data, .. }) => {
                             process_ledger_entry_data(
                                 env,
-                                cf_data,
+                                cf_body,
                                 data,
                                 Some(changes),
                                 Change::Update,
                             )
                         }
-                        LedgerEntryChange::Removed(key) => process_ledger_key(&env, cf_data, key),
+                        LedgerEntryChange::Removed(key) => process_ledger_key(&env, cf_body, key),
                         _ => {}
                     }
                 }
@@ -245,7 +244,7 @@ fn process_invoke_host_function_op(
 
 fn process_ledger_entry_data(
     env: &EnvClient,
-    cf_data: &mut Vec<Data>,
+    cf_body: &mut Body,
     data: &LedgerEntryData,
     changes: Option<&LedgerEntryChanges>,
     change: Change,
@@ -264,7 +263,7 @@ fn process_ledger_entry_data(
                             amount: env.from_scval(val),
                         };
 
-                        cf_data.push(Data::Color(data));
+                        cf_body.data.push(Data::Color(data));
                     }
                     StorageKey::Glyph(hash) => {
                         let glyph: Glyph = env.from_scval(val);
@@ -278,7 +277,7 @@ fn process_ledger_entry_data(
                             colors: colors.to_xdr_base64(Limits::none()).unwrap(),
                         };
 
-                        cf_data.push(Data::Glyph(data));
+                        cf_body.data.push(Data::Glyph(data));
                     }
                     StorageKey::GlyphOwner(hash) => {
                         let data = DataGlyphOwner {
@@ -287,7 +286,7 @@ fn process_ledger_entry_data(
                             owner: address_to_alloc_string(env, env.from_scval::<Address>(val)),
                         };
 
-                        cf_data.push(Data::GlyphOwner(data));
+                        cf_body.data.push(Data::GlyphOwner(data));
                     }
                     StorageKey::GlyphMinter(hash) => {
                         let data = DataGlyphMinter {
@@ -296,7 +295,7 @@ fn process_ledger_entry_data(
                             minter: address_to_alloc_string(env, env.from_scval::<Address>(val)),
                         };
 
-                        cf_data.push(Data::GlyphMinter(data));
+                        cf_body.data.push(Data::GlyphMinter(data));
                     }
                     StorageKey::GlyphOffer(hash) => {
                         let offers: SorobanVec<Offer> = env.from_scval(val);
@@ -338,7 +337,7 @@ fn process_ledger_entry_data(
                                     amount,
                                 };
 
-                                cf_data.push(Data::Offer(data));
+                                cf_body.data.push(Data::Offer(data));
                             }
 
                             // Remove if exists
@@ -379,7 +378,7 @@ fn process_ledger_entry_data(
                                             amount,
                                         };
 
-                                        cf_data.push(Data::Offer(data));
+                                        cf_body.data.push(Data::Offer(data));
                                     }
                                 }
                             }
@@ -408,7 +407,7 @@ fn process_ledger_entry_data(
                                 })),
                             };
 
-                            cf_data.push(Data::Offer(data));
+                            cf_body.data.push(Data::Offer(data));
                         }
 
                         // Remove if exists
@@ -426,7 +425,7 @@ fn process_ledger_entry_data(
                                         })),
                                     };
 
-                                    cf_data.push(Data::Offer(data));
+                                    cf_body.data.push(Data::Offer(data));
                                 }
                             }
                         }
@@ -439,7 +438,7 @@ fn process_ledger_entry_data(
     }
 }
 
-fn process_ledger_key(env: &EnvClient, cf_data: &mut Vec<Data>, key: &LedgerKey) {
+fn process_ledger_key(env: &EnvClient, cf_body: &mut Body, key: &LedgerKey) {
     if let LedgerKey::ContractData(LedgerKeyContractData { key, .. }) = key {
         if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
             match key {
@@ -455,7 +454,7 @@ fn process_ledger_key(env: &EnvClient, cf_data: &mut Vec<Data>, key: &LedgerKey)
                             selling: hex::encode(hash.to_array()),
                         };
 
-                        cf_data.push(Data::OfferSellerSelling(data));
+                        cf_body.data.push(Data::OfferSellerSelling(data));
                     }
                 }
                 StorageKey::AssetOffer(hash, sac, amount) => {
@@ -469,7 +468,7 @@ fn process_ledger_key(env: &EnvClient, cf_data: &mut Vec<Data>, key: &LedgerKey)
                         })),
                     };
 
-                    cf_data.push(Data::OfferSellingBuyingAmount(data));
+                    cf_body.data.push(Data::OfferSellingBuyingAmount(data));
                 }
                 _ => {}
             }
@@ -556,8 +555,11 @@ pub struct BackfillRequest {
 pub extern "C" fn backfill() {
     let env = EnvClient::empty();
     let request: BackfillRequest = env.read_request_body();
-    let mut cf_seq_num: i64 = 0;
-    let mut cf_data: Vec<Data> = vec![];
+    let mut cf_body = Body {
+        seq_num: 0,
+        fee_charged: 0,
+        data: vec![],
+    };
 
     let transaction_envelope =
         TransactionEnvelope::from_xdr_base64(request.envelope_xdr, Limits::none()).unwrap();
@@ -576,17 +578,13 @@ pub extern "C" fn backfill() {
 
     process_transaction(
         &env,
-        &mut cf_seq_num,
-        &mut cf_data,
+        &mut cf_body,
         &transaction_envelope,
         &transaction_result_meta,
     );
 
-    if !cf_data.is_empty() {
-        let body = serde_json::to_string(&Body {
-            seq_num: cf_seq_num,
-            data: cf_data,
-        })
+    if !cf_body.data.is_empty() {
+        let body = serde_json::to_string(&cf_body)
         .unwrap();
 
         env.send_web_request(AgnosticRequest {
@@ -597,5 +595,5 @@ pub extern "C" fn backfill() {
         });
     }
 
-    env.conclude("OK");
+    env.conclude(cf_body.data.len());
 }
