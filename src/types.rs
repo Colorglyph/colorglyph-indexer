@@ -5,8 +5,7 @@ use zephyr_sdk::soroban_sdk::{xdr::ScVal, Address, Vec as SorobanVec};
 // --- COLORS ---
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareColor {
-    pub kind: Kind,
+pub struct DataColor {
     pub change: Change,
     pub miner: String,
     pub owner: String,
@@ -17,28 +16,23 @@ pub struct CloudflareColor {
 // --- GLYPHS ---
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareGlyph {
-    pub kind: Kind,
+pub struct DataGlyph {
     pub change: Change,
     pub hash: String,
-    pub owner: String,
-    pub minter: String,
     pub width: u32,
     pub length: u32,
-    pub colors: ScVal,
+    pub colors: String, // TODO maybe cheaper as a Vec<8>
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareGlyphOwner {
-    pub kind: Kind,
+pub struct DataGlyphOwner {
     pub change: Change,
     pub hash: String,
     pub owner: String,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareGlyphMinter {
-    pub kind: Kind,
+pub struct DataGlyphMinter {
     pub change: Change,
     pub hash: String,
     pub minter: String,
@@ -47,8 +41,7 @@ pub struct CloudflareGlyphMinter {
 // --- OFFERS ---
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareOffer {
-    pub kind: Kind,
+pub struct DataOffer {
     pub change: Change,
     pub seller: String,
     pub selling: String,
@@ -57,16 +50,14 @@ pub struct CloudflareOffer {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareOfferSellerSelling {
-    pub kind: Kind,
+pub struct DataOfferSellerSelling {
     pub change: Change,
     pub seller: String,
     pub selling: String,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct CloudflareOfferSellingBuyingAmount {
-    pub kind: Kind,
+pub struct DataOfferSellingBuyingAmount {
     pub change: Change,
     pub selling: String,
     pub buying: String,
@@ -75,14 +66,24 @@ pub struct CloudflareOfferSellingBuyingAmount {
 
 // --- OTHER ---
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Kind {
-    Color,
-    Glyph,
-    Offer,
+#[derive(Serialize, Deserialize)]
+pub enum Data {
+    Color(DataColor),
+    Glyph(DataGlyph),
+    GlyphOwner(DataGlyphOwner),
+    GlyphMinter(DataGlyphMinter),
+    Offer(DataOffer),
+    OfferSellerSelling(DataOfferSellerSelling),
+    OfferSellingBuyingAmount(DataOfferSellingBuyingAmount),
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize)]
+pub struct Body {
+    pub seq_num: i64,
+    pub data: Vec<Data>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub enum Change {
     Create,
     Update,

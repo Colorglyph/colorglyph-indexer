@@ -5,6 +5,9 @@ const horizon = new Horizon.Server('https://horizon-testnet.stellar.org');
 const accounts = [
     'GBGP5SD75TDB2ZL7JDJEFPSWDBEQRDJ4757ZXL57TOOQJSMWROT5JYKD',
     'GAID7BB5TASKY4JBDBQX2IVD33CUYXUPDS2O5NAVAP277PLMHFE6AO3Y',
+    'GBWQH5ILBDZYPILMVYK75SESCJGW6WGONGRGDHRSSHLMZ4DBYIM42ADC',
+    'GD5ST3FAM5XCPS5MEXAIIOWIVWVCUBY4F6NUKXAENVPUZULJRZY2RUR3',
+    'GCC6BOVGRVVL4AT3AJWAOD4C5C5RIFPX55D3WPZKZTWS6HDASODVBEZT',
 ];
 
 const transactions: Horizon.ServerApi.TransactionRecord[] = []
@@ -23,7 +26,7 @@ for (const { hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr } of t
 
         if (
             fn 
-            && fn.includes('glyph_mint')
+            // && fn.includes('glyph_mint')
         ) await backfill(hash, ledger_attr, envelope_xdr, result_meta_xdr, result_xdr)
     }
 }

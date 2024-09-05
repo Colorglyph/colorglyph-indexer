@@ -1,9 +1,8 @@
 use colorglyph::types::{Glyph, Offer, StorageKey};
 use serde::{Deserialize, Serialize};
 use types::{
-    Change, CloudflareColor, CloudflareGlyph, CloudflareGlyphMinter, CloudflareGlyphOwner,
-    CloudflareOffer, CloudflareOfferSellerSelling, CloudflareOfferSellingBuyingAmount, Kind,
-    Offers,
+    Body, Change, Data, DataColor, DataGlyph, DataGlyphMinter, DataGlyphOwner, DataOffer,
+    DataOfferSellerSelling, DataOfferSellingBuyingAmount, Offers,
 };
 use zephyr_sdk::{
     prelude::*,
@@ -41,15 +40,40 @@ pub const CONTRACT_ADDRESS: [u8; 32] = [
 #[no_mangle]
 pub extern "C" fn on_close() {
     let env = EnvClient::new();
+    let mut cf_seq_num: i64 = 0;
+    let mut cf_data: Vec<Data> = vec![];
 
     for (transaction_envelope, transaction_result_meta) in env.reader().envelopes_with_meta().iter()
     {
-        process_transaction(&env, transaction_envelope, transaction_result_meta);
+        process_transaction(
+            &env,
+            &mut cf_seq_num,
+            &mut cf_data,
+            transaction_envelope,
+            transaction_result_meta,
+        );
+    }
+
+    if !cf_data.is_empty() {
+        let body = serde_json::to_string(&Body {
+            seq_num: cf_seq_num,
+            data: cf_data,
+        })
+        .unwrap();
+
+        env.send_web_request(AgnosticRequest {
+            body: Some(body),
+            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
+            method: Method::Post,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+        });
     }
 }
 
 fn process_transaction(
     env: &EnvClient,
+    cf_seq_num: &mut i64,
+    cf_data: &mut Vec<Data>,
     transaction_envelope: &TransactionEnvelope,
     transaction_result_meta: &TransactionResultMeta,
 ) {
@@ -69,6 +93,8 @@ fn process_transaction(
             match result {
                 InnerTransactionResultResult::TxSuccess(results) => process_operation_result(
                     &env,
+                    cf_seq_num,
+                    cf_data,
                     results,
                     transaction_envelope,
                     tx_apply_processing,
@@ -76,15 +102,22 @@ fn process_transaction(
                 _ => {}
             }
         }
-        TransactionResultResult::TxSuccess(results) => {
-            process_operation_result(&env, results, transaction_envelope, tx_apply_processing)
-        }
+        TransactionResultResult::TxSuccess(results) => process_operation_result(
+            &env,
+            cf_seq_num,
+            cf_data,
+            results,
+            transaction_envelope,
+            tx_apply_processing,
+        ),
         _ => {}
     }
 }
 
 fn process_operation_result(
     env: &EnvClient,
+    cf_seq_num: &mut i64,
+    cf_data: &mut Vec<Data>,
     results: &VecM<OperationResult>,
     tx_envelope: &TransactionEnvelope,
     tx_apply_processing: &TransactionMeta,
@@ -104,11 +137,13 @@ fn process_operation_result(
                                     TransactionEnvelope::Tx(TransactionV1Envelope {
                                         tx, ..
                                     }) => {
+                                        *cf_seq_num = tx.seq_num.0;
+
                                         for Operation { body, .. } in tx.operations.iter() {
                                             match body {
                                                 OperationBody::InvokeHostFunction(op) => {
                                                     process_invoke_host_function_op(
-                                                        &env, op, changes,
+                                                        env, cf_data, op, changes,
                                                     )
                                                 }
                                                 _ => {}
@@ -124,11 +159,13 @@ fn process_operation_result(
                                             FeeBumpTransactionInnerTx::Tx(
                                                 TransactionV1Envelope { tx, .. },
                                             ) => {
+                                                *cf_seq_num = tx.seq_num.0;
+
                                                 for Operation { body, .. } in tx.operations.iter() {
                                                     match body {
                                                         OperationBody::InvokeHostFunction(op) => {
                                                             process_invoke_host_function_op(
-                                                                &env, op, changes,
+                                                                env, cf_data, op, changes,
                                                             )
                                                         }
                                                         _ => {}
@@ -154,6 +191,7 @@ fn process_operation_result(
 
 fn process_invoke_host_function_op(
     env: &EnvClient,
+    cf_data: &mut Vec<Data>,
     op: &InvokeHostFunctionOp,
     changes: &LedgerEntryChanges,
 ) {
@@ -184,12 +222,18 @@ fn process_invoke_host_function_op(
                 for change in changes.iter() {
                     match change {
                         LedgerEntryChange::Created(LedgerEntry { data, .. }) => {
-                            process_ledger_entry_data(&env, data, None, Change::Create)
+                            process_ledger_entry_data(env, cf_data, data, None, Change::Create)
                         }
                         LedgerEntryChange::Updated(LedgerEntry { data, .. }) => {
-                            process_ledger_entry_data(&env, data, Some(changes), Change::Update)
+                            process_ledger_entry_data(
+                                env,
+                                cf_data,
+                                data,
+                                Some(changes),
+                                Change::Update,
+                            )
                         }
-                        LedgerEntryChange::Removed(key) => process_ledger_key(&env, key),
+                        LedgerEntryChange::Removed(key) => process_ledger_key(&env, cf_data, key),
                         _ => {}
                     }
                 }
@@ -201,6 +245,7 @@ fn process_invoke_host_function_op(
 
 fn process_ledger_entry_data(
     env: &EnvClient,
+    cf_data: &mut Vec<Data>,
     data: &LedgerEntryData,
     changes: Option<&LedgerEntryChanges>,
     change: Change,
@@ -208,10 +253,10 @@ fn process_ledger_entry_data(
     match data {
         LedgerEntryData::ContractData(SorobanContractDataEntry { key, val, .. }) => {
             if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
+                // using try_ so we don't panic if the key isn't a StorageKey
                 match &key {
                     StorageKey::Color(miner, owner, color) => {
-                        let data = CloudflareColor {
-                            kind: Kind::Color,
+                        let data = DataColor {
                             change,
                             miner: address_to_alloc_string(env, miner.clone()),
                             owner: address_to_alloc_string(env, owner.clone()),
@@ -219,76 +264,39 @@ fn process_ledger_entry_data(
                             amount: env.from_scval(val),
                         };
 
-                        let body = serde_json::to_string(&data).unwrap();
-
-                        env.send_web_request(AgnosticRequest {
-                            body: Some(body),
-                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                .into(),
-                            method: Method::Post,
-                            headers: vec![("Content-Type".into(), "application/json".into())],
-                        })
+                        cf_data.push(Data::Color(data));
                     }
                     StorageKey::Glyph(hash) => {
                         let glyph: Glyph = env.from_scval(val);
                         let colors = env.to_scval(glyph.colors);
 
-                        let data = CloudflareGlyph {
-                            kind: Kind::Glyph,
+                        let data = DataGlyph {
                             change,
                             hash: hex::encode(hash.to_array()),
-                            owner: String::new(), // if let Some(owner) = get_glyph_owner(env, hash) { owner } else { String::new() },
-                            minter: String::new(),
                             width: glyph.width,
                             length: glyph.length,
-                            colors,
+                            colors: colors.to_xdr_base64(Limits::none()).unwrap(),
                         };
 
-                        let body = serde_json::to_string(&data).unwrap();
-
-                        env.send_web_request(AgnosticRequest {
-                            body: Some(body),
-                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                .into(),
-                            method: Method::Post,
-                            headers: vec![("Content-Type".into(), "application/json".into())],
-                        })
+                        cf_data.push(Data::Glyph(data));
                     }
                     StorageKey::GlyphOwner(hash) => {
-                        let data = CloudflareGlyphOwner {
-                            kind: Kind::Glyph,
+                        let data = DataGlyphOwner {
                             change,
                             hash: hex::encode(hash.to_array()),
                             owner: address_to_alloc_string(env, env.from_scval::<Address>(val)),
                         };
 
-                        let body = serde_json::to_string(&data).unwrap();
-
-                        env.send_web_request(AgnosticRequest {
-                            body: Some(body),
-                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                .into(),
-                            method: Method::Post,
-                            headers: vec![("Content-Type".into(), "application/json".into())],
-                        })
+                        cf_data.push(Data::GlyphOwner(data));
                     }
                     StorageKey::GlyphMinter(hash) => {
-                        let data = CloudflareGlyphMinter {
-                            kind: Kind::Glyph,
+                        let data = DataGlyphMinter {
                             change,
                             hash: hex::encode(hash.to_array()),
                             minter: address_to_alloc_string(env, env.from_scval::<Address>(val)),
                         };
 
-                        let body = serde_json::to_string(&data).unwrap();
-
-                        env.send_web_request(AgnosticRequest {
-                            body: Some(body),
-                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                .into(),
-                            method: Method::Post,
-                            headers: vec![("Content-Type".into(), "application/json".into())],
-                        })
+                        cf_data.push(Data::GlyphMinter(data));
                     }
                     StorageKey::GlyphOffer(hash) => {
                         let offers: SorobanVec<Offer> = env.from_scval(val);
@@ -319,8 +327,7 @@ fn process_ledger_entry_data(
                                     }
                                 }
 
-                                let data = CloudflareOffer {
-                                    kind: Kind::Offer,
+                                let data = DataOffer {
                                     change: change.clone(),
                                     seller: address_to_alloc_string(
                                         env,
@@ -331,19 +338,7 @@ fn process_ledger_entry_data(
                                     amount,
                                 };
 
-                                let body = serde_json::to_string(&data).unwrap();
-
-                                env.send_web_request(AgnosticRequest {
-                                    body: Some(body),
-                                    url:
-                                        "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                            .into(),
-                                    method: Method::Post,
-                                    headers: vec![(
-                                        "Content-Type".into(),
-                                        "application/json".into(),
-                                    )],
-                                })
+                                cf_data.push(Data::Offer(data));
                             }
 
                             // Remove if exists
@@ -373,8 +368,7 @@ fn process_ledger_entry_data(
                                             }
                                         }
 
-                                        let data = CloudflareOffer {
-                                            kind: Kind::Offer,
+                                        let data = DataOffer {
                                             change: Change::Remove,
                                             seller: address_to_alloc_string(
                                                 env,
@@ -385,16 +379,7 @@ fn process_ledger_entry_data(
                                             amount,
                                         };
 
-                                        let body = serde_json::to_string(&data).unwrap();
-
-                                        env.send_web_request(AgnosticRequest {
-                                            body: Some(body),
-                                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
-                                            method: Method::Post,
-                                            headers: vec![
-                                                ("Content-Type".into(), "application/json".into()),
-                                            ]
-                                        })
+                                        cf_data.push(Data::Offer(data));
                                     }
                                 }
                             }
@@ -412,8 +397,7 @@ fn process_ledger_entry_data(
 
                         // Add or update
                         for owner in offers.iter() {
-                            let data = CloudflareOffer {
-                                kind: Kind::Offer,
+                            let data = DataOffer {
                                 change: change.clone(),
                                 seller: address_to_alloc_string(env, owner),
                                 selling: address_to_alloc_string(env, sac.clone()),
@@ -424,23 +408,14 @@ fn process_ledger_entry_data(
                                 })),
                             };
 
-                            let body = serde_json::to_string(&data).unwrap();
-
-                            env.send_web_request(AgnosticRequest {
-                                body: Some(body),
-                                url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                    .into(),
-                                method: Method::Post,
-                                headers: vec![("Content-Type".into(), "application/json".into())],
-                            })
+                            cf_data.push(Data::Offer(data));
                         }
 
                         // Remove if exists
                         if let Some(offers) = diff_offers {
                             if let Offers::Addresses(offers) = offers {
                                 for owner in offers.iter() {
-                                    let data = CloudflareOffer {
-                                        kind: Kind::Offer,
+                                    let data = DataOffer {
                                         change: Change::Remove,
                                         seller: address_to_alloc_string(env, owner),
                                         selling: address_to_alloc_string(env, sac.clone()),
@@ -451,16 +426,7 @@ fn process_ledger_entry_data(
                                         })),
                                     };
 
-                                    let body = serde_json::to_string(&data).unwrap();
-
-                                    env.send_web_request(AgnosticRequest {
-                                        body: Some(body),
-                                        url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
-                                        method: Method::Post,
-                                        headers: vec![
-                                            ("Content-Type".into(), "application/json".into()),
-                                        ]
-                                    })
+                                    cf_data.push(Data::Offer(data));
                                 }
                             }
                         }
@@ -473,7 +439,7 @@ fn process_ledger_entry_data(
     }
 }
 
-fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
+fn process_ledger_key(env: &EnvClient, cf_data: &mut Vec<Data>, key: &LedgerKey) {
     if let LedgerKey::ContractData(LedgerKeyContractData { key, .. }) = key {
         if let Ok(key) = env.try_from_scval::<StorageKey>(key) {
             match key {
@@ -483,27 +449,17 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
                 // StorageKey::GlyphMinter(hash),
                 StorageKey::GlyphOffer(hash) => {
                     if let Some(owner) = get_glyph_owner(env, &hash) {
-                        let data = CloudflareOfferSellerSelling {
-                            kind: Kind::Offer,
+                        let data = DataOfferSellerSelling {
                             change: Change::Remove,
                             seller: address_to_alloc_string(env, env.from_scval::<Address>(&owner)),
                             selling: hex::encode(hash.to_array()),
                         };
 
-                        let body = serde_json::to_string(&data).unwrap();
-
-                        env.send_web_request(AgnosticRequest {
-                            body: Some(body),
-                            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr"
-                                .into(),
-                            method: Method::Post,
-                            headers: vec![("Content-Type".into(), "application/json".into())],
-                        })
+                        cf_data.push(Data::OfferSellerSelling(data));
                     }
                 }
                 StorageKey::AssetOffer(hash, sac, amount) => {
-                    let data = CloudflareOfferSellingBuyingAmount {
-                        kind: Kind::Offer,
+                    let data = DataOfferSellingBuyingAmount {
                         change: Change::Remove,
                         selling: hex::encode(hash.to_array()),
                         buying: address_to_alloc_string(env, sac),
@@ -513,14 +469,7 @@ fn process_ledger_key(env: &EnvClient, key: &LedgerKey) {
                         })),
                     };
 
-                    let body = serde_json::to_string(&data).unwrap();
-
-                    env.send_web_request(AgnosticRequest {
-                        body: Some(body),
-                        url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(),
-                        method: Method::Post,
-                        headers: vec![("Content-Type".into(), "application/json".into())],
-                    })
+                    cf_data.push(Data::OfferSellingBuyingAmount(data));
                 }
                 _ => {}
             }
@@ -607,6 +556,8 @@ pub struct BackfillRequest {
 pub extern "C" fn backfill() {
     let env = EnvClient::empty();
     let request: BackfillRequest = env.read_request_body();
+    let mut cf_seq_num: i64 = 0;
+    let mut cf_data: Vec<Data> = vec![];
 
     let transaction_envelope =
         TransactionEnvelope::from_xdr_base64(request.envelope_xdr, Limits::none()).unwrap();
@@ -623,7 +574,28 @@ pub extern "C" fn backfill() {
         .unwrap(),
     };
 
-    process_transaction(&env, &transaction_envelope, &transaction_result_meta);
+    process_transaction(
+        &env,
+        &mut cf_seq_num,
+        &mut cf_data,
+        &transaction_envelope,
+        &transaction_result_meta,
+    );
+
+    if !cf_data.is_empty() {
+        let body = serde_json::to_string(&Body {
+            seq_num: cf_seq_num,
+            data: cf_data,
+        })
+        .unwrap();
+
+        env.send_web_request(AgnosticRequest {
+            body: Some(body),
+            url: "https://colorglyph-worker.sdf-ecosystem.workers.dev/zephyr".into(), // TODO make this an env var
+            method: Method::Post,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+        });
+    }
 
     env.conclude("OK");
 }
